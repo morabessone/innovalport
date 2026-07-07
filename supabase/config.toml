@@ -1,0 +1,15 @@
+# Configuración del proyecto Supabase (CLI).
+# El project_id se completa al hacer `supabase link --project-ref <ref>`.
+project_id = "innovalport-centro-stock"
+
+[functions.stock-sync]
+verify_jwt = false          # se invoca por cron / servicio
+
+[functions.contabilium-worker]
+verify_jwt = false          # se invoca por cron / servicio
+
+[functions.ocr-ingreso]
+verify_jwt = true           # lo llama el panel con la anon key
+
+[functions.acciones]
+verify_jwt = true           # lo llama el panel con la anon key

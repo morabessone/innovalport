@@ -1,0 +1,689 @@
+<title>Centro de Stock — Propuesta para Innovalport</title>
+<style>
+  :root {
+    --paper: #EFF1F4;
+    --card: #FFFFFF;
+    --card-2: #F7F8FA;
+    --ink: #0E1B2E;
+    --ink-soft: #47566A;
+    --ink-faint: #7A8798;
+    --line: #DCE1E9;
+    --line-strong: #C3CBD7;
+    --accent: #FA5A1E;
+    --accent-deep: #C6410E;
+    --accent-wash: #FCEAE1;
+    --ok: #14875A;
+    --ok-wash: #DFF0E7;
+    --bad: #CC3A25;
+    --bad-wash: #F7E2DD;
+    --shadow: 0 1px 2px rgba(14,27,46,.04), 0 8px 24px rgba(14,27,46,.06);
+    --shadow-lift: 0 2px 6px rgba(14,27,46,.08), 0 18px 44px rgba(14,27,46,.12);
+
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+
+    --maxw: 1080px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0A1220;
+      --card: #111F31;
+      --card-2: #0E1B2B;
+      --ink: #E9EFF6;
+      --ink-soft: #9DABBC;
+      --ink-faint: #6C7C8F;
+      --line: #21324A;
+      --line-strong: #2E4361;
+      --accent: #FF6E3C;
+      --accent-deep: #FF8A5F;
+      --accent-wash: #2A1810;
+      --ok: #3FCB8A;
+      --ok-wash: #10271D;
+      --bad: #F16A52;
+      --bad-wash: #2C1512;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --shadow-lift: 0 2px 6px rgba(0,0,0,.4), 0 18px 44px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #EFF1F4; --card: #FFFFFF; --card-2: #F7F8FA; --ink: #0E1B2E;
+    --ink-soft: #47566A; --ink-faint: #7A8798; --line: #DCE1E9; --line-strong: #C3CBD7;
+    --accent: #FA5A1E; --accent-deep: #C6410E; --accent-wash: #FCEAE1;
+    --ok: #14875A; --ok-wash: #DFF0E7; --bad: #CC3A25; --bad-wash: #F7E2DD;
+    --shadow: 0 1px 2px rgba(14,27,46,.04), 0 8px 24px rgba(14,27,46,.06);
+    --shadow-lift: 0 2px 6px rgba(14,27,46,.08), 0 18px 44px rgba(14,27,46,.12);
+  }
+  :root[data-theme="dark"] {
+    --paper: #0A1220; --card: #111F31; --card-2: #0E1B2B; --ink: #E9EFF6;
+    --ink-soft: #9DABBC; --ink-faint: #6C7C8F; --line: #21324A; --line-strong: #2E4361;
+    --accent: #FF6E3C; --accent-deep: #FF8A5F; --accent-wash: #2A1810;
+    --ok: #3FCB8A; --ok-wash: #10271D; --bad: #F16A52; --bad-wash: #2C1512;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lift: 0 2px 6px rgba(0,0,0,.4), 0 18px 44px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  /* ---- type ---- */
+  h1, h2, h3 { text-wrap: balance; margin: 0; letter-spacing: -0.02em; line-height: 1.08; }
+  h1 { font-size: clamp(2.4rem, 6.2vw, 4.3rem); font-weight: 800; }
+  h2 { font-size: clamp(1.7rem, 3.6vw, 2.5rem); font-weight: 750; }
+  h3 { font-size: 1.18rem; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .74rem;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    font-weight: 600;
+  }
+  .lead { font-size: clamp(1.05rem, 2vw, 1.28rem); color: var(--ink-soft); }
+  .mono { font-family: var(--mono); }
+
+  /* ---- section rhythm ---- */
+  section { padding: clamp(56px, 9vw, 104px) 0; }
+  .sec-head { display: flex; flex-direction: column; gap: 14px; max-width: 40ch; margin-bottom: clamp(32px, 5vw, 52px); }
+  .sec-head p { color: var(--ink-soft); font-size: 1.05rem; }
+
+  /* ---- hero ---- */
+  .hero {
+    position: relative;
+    padding: clamp(56px, 10vw, 120px) 0 clamp(40px, 6vw, 72px);
+    overflow: hidden;
+  }
+  .hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(60% 80% at 88% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 60%),
+      repeating-linear-gradient(90deg, transparent 0 63px, color-mix(in srgb, var(--line) 55%, transparent) 63px 64px);
+    -webkit-mask-image: linear-gradient(180deg, #000 0 55%, transparent);
+            mask-image: linear-gradient(180deg, #000 0 55%, transparent);
+    pointer-events: none;
+  }
+  .hero .wrap { position: relative; }
+  .hero-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: clamp(32px, 5vw, 64px); align-items: center; }
+  @media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; } }
+  .hero h1 { margin-top: 20px; }
+  .hero h1 .hl { color: var(--accent); }
+  .hero .lead { margin-top: 22px; max-width: 42ch; }
+  .kicker-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .04em;
+    padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--line-strong); color: var(--ink-soft); background: var(--card);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+  /* stock panel mockup */
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow-lift);
+    overflow: hidden;
+  }
+  .panel-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    background: var(--card-2);
+  }
+  .panel-title { font-family: var(--mono); font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+  .live { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: .7rem; color: var(--ok); }
+  .live .dot { background: var(--ok); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center;
+    padding: 13px 16px; border-bottom: 1px solid var(--line);
+  }
+  .row:last-child { border-bottom: 0; }
+  .sku { font-family: var(--mono); font-size: .82rem; font-weight: 600; letter-spacing: -0.01em; }
+  .sku small { display: block; font-family: var(--sans); font-weight: 400; color: var(--ink-faint); font-size: .74rem; letter-spacing: 0; }
+  .deps { display: flex; gap: 5px; }
+  .dep {
+    font-family: var(--mono); font-size: .64rem; padding: 3px 6px; border-radius: 6px;
+    background: var(--card-2); border: 1px solid var(--line); color: var(--ink-soft); letter-spacing: .03em;
+  }
+  .qty { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 700; font-size: .95rem; text-align: right; min-width: 3ch; }
+  .state { font-family: var(--mono); font-size: .64rem; padding: 3px 8px; border-radius: 999px; letter-spacing: .04em; white-space: nowrap; }
+  .state.ok { background: var(--ok-wash); color: var(--ok); }
+  .state.bad { background: var(--bad-wash); color: var(--bad); }
+
+  /* ---- problem quotes ---- */
+  .quotes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 820px) { .quotes { grid-template-columns: 1fr; } }
+  .quote {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px;
+    position: relative;
+  }
+  .quote::before {
+    content: "\201C"; position: absolute; top: 4px; right: 18px;
+    font-size: 4.5rem; line-height: 1; color: var(--accent); opacity: .18; font-family: Georgia, serif;
+  }
+  .quote blockquote { margin: 0; font-size: 1.12rem; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
+  .who { display: flex; align-items: center; gap: 11px; margin-top: auto; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex: none;
+    display: grid; place-items: center; font-family: var(--mono); font-weight: 700; font-size: .8rem;
+    background: var(--accent-wash); color: var(--accent-deep); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .who b { font-size: .9rem; }
+  .who span { display: block; font-size: .78rem; color: var(--ink-faint); }
+
+  .cost-strip {
+    margin-top: 36px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+    background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  }
+  @media (max-width: 820px) { .cost-strip { grid-template-columns: 1fr; } }
+  .cost { background: var(--card); padding: 22px 24px; display: flex; flex-direction: column; gap: 4px; }
+  .cost b { font-family: var(--mono); font-size: 1.85rem; font-weight: 750; letter-spacing: -0.02em; color: var(--accent); }
+  .cost span { font-size: .92rem; color: var(--ink-soft); }
+
+  /* ---- idea band ---- */
+  .idea {
+    background: #0E1B2E; color: #fff; border-radius: 22px; padding: clamp(34px, 5vw, 56px);
+    display: grid; grid-template-columns: 1fr; gap: 26px; position: relative; overflow: hidden;
+  }
+  :root[data-theme="dark"] .idea, @media (prefers-color-scheme: dark) { }
+  .idea { --on-ink-soft: #A9B6C6; }
+  .idea::after {
+    content: ""; position: absolute; right: -60px; top: -60px; width: 260px; height: 260px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 55%, transparent), transparent 65%);
+    pointer-events: none;
+  }
+  .idea .eyebrow { color: var(--accent-deep); }
+  :root[data-theme="dark"] .idea .eyebrow, .idea .eyebrow { color: #FF8A5F; }
+  .idea h2 { color: #fff; max-width: 22ch; position: relative; }
+  .idea p { color: var(--on-ink-soft); max-width: 62ch; font-size: 1.08rem; position: relative; }
+  .idea .hl { color: #fff; font-weight: 700; }
+  .idea-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 4px; }
+  @media (max-width: 720px) { .idea-2 { grid-template-columns: 1fr; } }
+  .idea-card {
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .idea-card h3 { color: #fff; }
+  .idea-card p { color: var(--on-ink-soft); font-size: .96rem; }
+  .idea-card .pin { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: #FF8A5F; }
+
+  /* ---- flow diagram ---- */
+  .flow {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; position: relative;
+  }
+  @media (max-width: 900px) { .flow { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .flow { grid-template-columns: 1fr; } }
+  .stage {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px 18px;
+    display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow); position: relative;
+  }
+  .stage-label { display: flex; align-items: center; gap: 9px; }
+  .stage-num {
+    font-family: var(--mono); font-size: .7rem; width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 700;
+  }
+  .stage-label h3 { font-size: 1.02rem; }
+  .stage ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .stage li {
+    font-size: .9rem; color: var(--ink-soft); padding: 8px 11px; border-radius: 9px;
+    background: var(--card-2); border: 1px solid var(--line); display: flex; align-items: center; gap: 8px;
+  }
+  .stage li .chip { font-family: var(--mono); font-size: .6rem; padding: 2px 5px; border-radius: 5px; background: var(--accent-wash); color: var(--accent-deep); letter-spacing: .04em; flex: none; }
+  .flow-arrow { color: var(--accent); }
+  .flow-note {
+    margin-top: 16px; background: var(--accent-wash); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-radius: 14px; padding: 18px 22px; display: flex; gap: 14px; align-items: flex-start;
+  }
+  .flow-note .mono { color: var(--accent-deep); font-weight: 700; font-size: .8rem; letter-spacing: .05em; flex: none; }
+  .flow-note p { font-size: .96rem; color: var(--ink); }
+  .flow-note b { color: var(--ink); }
+
+  /* ---- 4 flujos cards ---- */
+  .flujos { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 820px) { .flujos { grid-template-columns: 1fr; } }
+  .flujo {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden;
+    box-shadow: var(--shadow); display: flex; flex-direction: column;
+  }
+  .flujo-head { padding: 22px 24px 18px; display: flex; gap: 14px; align-items: flex-start; border-bottom: 1px solid var(--line); }
+  .flujo-ico {
+    width: 42px; height: 42px; border-radius: 11px; flex: none; display: grid; place-items: center;
+    background: var(--accent-wash); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  .flujo-ico svg { width: 22px; height: 22px; stroke: var(--accent-deep); }
+  .flujo-head h3 { margin-bottom: 3px; }
+  .flujo-head p { font-size: .9rem; color: var(--ink-soft); }
+  .ba { display: grid; grid-template-columns: 1fr 1fr; }
+  .ba > div { padding: 18px 22px; display: flex; flex-direction: column; gap: 7px; }
+  .ba .before { border-right: 1px solid var(--line); }
+  .ba-label { font-family: var(--mono); font-size: .66rem; letter-spacing: .14em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .ba .before .ba-label { color: var(--ink-faint); }
+  .ba .after .ba-label { color: var(--ok); }
+  .ba p { font-size: .92rem; }
+  .ba .before p { color: var(--ink-soft); }
+  .ba .after p { color: var(--ink); font-weight: 550; }
+  .strike { width: 11px; height: 2px; background: var(--ink-faint); display: inline-block; }
+  .check { color: var(--ok); }
+
+  /* ---- per person ---- */
+  .persons { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; }
+  @media (max-width: 820px) { .persons { grid-template-columns: 1fr; } }
+  .person {
+    border: 1px solid var(--line); border-radius: 18px; padding: 26px 24px; background: var(--card);
+    box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px;
+  }
+  .person-top { display: flex; align-items: center; gap: 13px; }
+  .person .avatar { width: 44px; height: 44px; font-size: 1rem; }
+  .person-top b { font-size: 1.08rem; display: block; }
+  .person-top span { font-size: .82rem; color: var(--ink-faint); }
+  .person ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+  .person li { display: flex; gap: 11px; font-size: .95rem; color: var(--ink-soft); align-items: flex-start; }
+  .person li svg { width: 18px; height: 18px; stroke: var(--accent); flex: none; margin-top: 2px; }
+
+  /* ---- steps ---- */
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: grid; grid-template-columns: auto 1fr; gap: 22px; padding: 24px 0; border-top: 1px solid var(--line);
+  }
+  .step:first-child { border-top: 0; }
+  .step-n {
+    font-family: var(--mono); font-size: 1.1rem; font-weight: 750; color: var(--accent);
+    width: 52px; height: 52px; border-radius: 13px; display: grid; place-items: center;
+    background: var(--accent-wash); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .step-body h3 { margin-bottom: 6px; }
+  .step-body p { color: var(--ink-soft); font-size: .98rem; max-width: 60ch; }
+  .step-tag {
+    display: inline-block; margin-top: 10px; font-family: var(--mono); font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 999px; background: var(--ok-wash); color: var(--ok);
+  }
+  .step-tag.warn { background: var(--accent-wash); color: var(--accent-deep); }
+
+  /* ---- close ---- */
+  .close {
+    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 22px;
+    padding: clamp(56px, 9vw, 100px) 0;
+  }
+  .close h2 { max-width: 20ch; }
+  .close p { color: var(--ink-soft); max-width: 52ch; font-size: 1.1rem; }
+  .pill-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+  .pill {
+    font-family: var(--mono); font-size: .78rem; padding: 10px 16px; border-radius: 999px;
+    border: 1px solid var(--line-strong); color: var(--ink-soft); background: var(--card);
+  }
+
+  footer { border-top: 1px solid var(--line); padding: 30px 0 50px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
+  footer p { font-family: var(--mono); font-size: .74rem; color: var(--ink-faint); letter-spacing: .04em; }
+
+  .divider-label {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 30px;
+  }
+  .divider-label .eyebrow { white-space: nowrap; }
+  .divider-label .rule { height: 1px; background: var(--line); flex: 1; }
+
+  /* reveal */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .live .dot { animation: none; }
+  }
+</style>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="kicker-row">
+          <span class="eyebrow">Propuesta · Innovalport</span>
+          <span class="tag"><span class="dot"></span> Gestión de stock</span>
+        </div>
+        <h1>Saber cuánto stock tenés y <span class="hl">dónde</span>. Sin cargar nada a mano.</h1>
+        <p class="lead">Un solo lugar para controlar todo el stock de Innovalport —importación, depósitos, ventas y devoluciones— conectado a Contabilium y Mercado&nbsp;Libre. Lo llamamos el <b>Centro de Stock</b>.</p>
+      </div>
+      <div class="panel reveal" aria-hidden="true">
+        <div class="panel-top">
+          <span class="panel-title">Centro de Stock</span>
+          <span class="live"><span class="dot"></span> en vivo</span>
+        </div>
+        <div class="row">
+          <span class="sku">INODORO-INTEL-PORT<small>Inodoro inteligente</small></span>
+          <span class="deps"><span class="dep">GEN 40</span><span class="dep">FULL 12</span></span>
+          <span class="state ok">OK</span>
+        </div>
+        <div class="row">
+          <span class="sku">DUCHAPROPIO-PORT<small>Duchador inteligente</small></span>
+          <span class="deps"><span class="dep">FLX 3</span></span>
+          <span class="state bad">reponer</span>
+        </div>
+        <div class="row">
+          <span class="sku">BACHA-INTEL-PORT<small>Bacha inteligente</small></span>
+          <span class="deps"><span class="dep">GEN 88</span><span class="dep">FLX 20</span></span>
+          <span class="state ok">OK</span>
+        </div>
+        <div class="row">
+          <span class="sku">CAM-WIFI-PORT<small>Cámara seguridad</small></span>
+          <span class="deps"><span class="dep">FULL 0</span></span>
+          <span class="state bad">sin stock</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- PROBLEMA -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">El problema hoy</span>
+      <h2>Lo que ustedes mismos nos dijeron</h2>
+      <p>No lo inventamos nosotros. Cuando le preguntamos a cada uno qué automatizaría primero, la respuesta fue la misma sin ponerse de acuerdo.</p>
+    </div>
+    <div class="quotes">
+      <figure class="quote reveal">
+        <blockquote>No saber concretamente la cantidad de stock que tenemos y en qué depósito.</blockquote>
+        <figcaption class="who">
+          <span class="avatar">JA</span>
+          <div><b>Javier</b><span>Logística y depósitos</span></div>
+        </figcaption>
+      </figure>
+      <figure class="quote reveal">
+        <blockquote>Vender sin stock nos pasa 3 veces por semana como mínimo.</blockquote>
+        <figcaption class="who">
+          <span class="avatar">TO</span>
+          <div><b>Tomás</b><span>Mercado Libre</span></div>
+        </figcaption>
+      </figure>
+      <figure class="quote reveal">
+        <blockquote>Si pudiéramos automatizar una sola cosa, sería la gestión de stock.</blockquote>
+        <figcaption class="who">
+          <span class="avatar">MA</span>
+          <div><b>Martín</b><span>Dirección</span></div>
+        </figcaption>
+      </figure>
+    </div>
+    <div class="cost-strip reveal">
+      <div class="cost"><b>3×</b><span>por semana se vende algo que no hay en stock, y hay que cancelar o correr a reponer.</span></div>
+      <div class="cost"><b>4</b><span>depósitos (Genpol, Flexit, Full, Oficina) y ninguna foto única de qué hay en cada uno.</span></div>
+      <div class="cost"><b>$$$</b><span>capital parado en sobrestock de un producto mientras se corta la venta de otro.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- IDEA -->
+<section>
+  <div class="wrap reveal">
+    <div class="idea">
+      <div>
+        <span class="eyebrow">La idea en una frase</span>
+        <h2>Contabilium sigue siendo el corazón. Ustedes dejan de cargarlo a mano.</h2>
+        <p>No cambiamos lo que ya funciona: Contabilium sigue teniendo el stock y sigue sincronizando con Mercado Libre y Tienda Nube solo. Lo que sumamos es <span class="hl">una app simple por encima</span> —el Centro de Stock— donde cada movimiento se hace con una foto o un toque, y el sistema lo carga por ustedes.</p>
+      </div>
+      <div class="idea-2">
+        <div class="idea-card">
+          <span class="pin">Lo que NO cambia</span>
+          <h3>Contabilium y sus conexiones</h3>
+          <p>Sigue facturando, llevando el stock y sincronizando con los canales de venta. Cero riesgo de duplicar información.</p>
+        </div>
+        <div class="idea-card">
+          <span class="pin">Lo que SÍ cambia</span>
+          <h3>Se termina la carga manual</h3>
+          <p>Sacás una foto de la factura, tocás para mover stock, y las devoluciones se ordenan solas. Contabilium se llena solo por detrás.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FLUJO -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">El recorrido del stock</span>
+      <h2>De China al cliente, y de vuelta</h2>
+      <p>Todo el ciclo en un solo mapa. El Centro de Stock ve y registra cada paso.</p>
+    </div>
+    <div class="flow reveal">
+      <div class="stage">
+        <div class="stage-label"><span class="stage-num">1</span><h3>Entra</h3></div>
+        <ul>
+          <li><span class="chip">IMPO</span> Importación de China → Genpol</li>
+          <li><span class="chip">LOCAL</span> Maty / LBS → los retira Javier</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="stage-label"><span class="stage-num">2</span><h3>Se guarda</h3></div>
+        <ul>
+          <li><span class="chip">GEN</span> Genpol · general</li>
+          <li><span class="chip">FLX</span> Flexit · envíos Flex</li>
+          <li><span class="chip">FULL</span> Full · Mercado Libre</li>
+          <li><span class="chip">OFI</span> Oficina</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="stage-label"><span class="stage-num">3</span><h3>Se vende</h3></div>
+        <ul>
+          <li><span class="chip">ML</span> Mercado Libre</li>
+          <li><span class="chip">TN</span> Tienda Nube</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="stage-label"><span class="stage-num">4</span><h3>Vuelve</h3></div>
+        <ul>
+          <li><span class="chip">OK</span> Apta → alta sin compra</li>
+          <li><span class="chip">NO</span> No apta → baja + pérdida</li>
+        </ul>
+      </div>
+    </div>
+    <div class="flow-note reveal">
+      <span class="mono">REGLA</span>
+      <p><b>Un movimiento, un registro, siempre.</b> Cada vez que algo cambia de depósito o entra o sale, se genera el remito solo. Se termina la planilla de Excel y el "lo mando al grupo de WhatsApp": el dato vive en un solo lugar.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4 FLUJOS -->
+<section>
+  <div class="wrap">
+    <div class="divider-label reveal"><span class="eyebrow">Cómo se usa</span><span class="rule"></span></div>
+    <div class="flujos">
+
+      <article class="flujo reveal">
+        <div class="flujo-head">
+          <span class="flujo-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h3l2-2h8l2 2h3v11H3z"/><circle cx="12" cy="13" r="3.2"/></svg></span>
+          <div><h3>Ingreso por foto</h3><p>Llega mercadería, sacás una foto de la factura o remito.</p></div>
+        </div>
+        <div class="ba">
+          <div class="before">
+            <span class="ba-label"><span class="strike"></span> Antes</span>
+            <p>Cargar cada línea a mano en Contabilium, "que es una paja". A veces se demora días.</p>
+          </div>
+          <div class="after">
+            <span class="ba-label"><span class="check">✓</span> Ahora</span>
+            <p>La foto lee los productos y cantidades sola. Elegís el depósito destino y listo.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="flujo reveal">
+        <div class="flujo-head">
+          <span class="flujo-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11l-3-3M20 17H9l3 3"/></svg></span>
+          <div><h3>Movimiento entre depósitos</h3><p>Mandás stock de Genpol a Flexit, o a Full.</p></div>
+        </div>
+        <div class="ba">
+          <div class="before">
+            <span class="ba-label"><span class="strike"></span> Antes</span>
+            <p>Anotar en Excel y mandarlo al grupo. De la oficina a un depósito, muchas veces sin remito.</p>
+          </div>
+          <div class="after">
+            <span class="ba-label"><span class="check">✓</span> Ahora</span>
+            <p>Un toque y el remito se genera solo, numerado. Nunca más se mueve algo "sin registrar".</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="flujo reveal">
+        <div class="flujo-head">
+          <span class="flujo-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v11H4z"/><path d="M4 10h16M9 17v3M15 17v3"/></svg></span>
+          <div><h3>Ventas sincronizadas</h3><p>Alguien compra en Mercado Libre o Tienda Nube.</p></div>
+        </div>
+        <div class="ba">
+          <div class="before">
+            <span class="ba-label"><span class="strike"></span> Antes</span>
+            <p>Algunos productos descuentan solos, otros hay que tocarlos a mano → sobreventa 3 veces por semana.</p>
+          </div>
+          <div class="after">
+            <span class="ba-label"><span class="check">✓</span> Ahora</span>
+            <p>Todo descuenta solo y aparece una alerta antes de que se corte una publicación por falta de stock.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="flujo reveal">
+        <div class="flujo-head">
+          <span class="flujo-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5L4 10l5 5"/><path d="M4 10h11a5 5 0 0 1 5 5v1"/></svg></span>
+          <div><h3>Devoluciones ordenadas</h3><p>Vuelve un producto y se revisa en la oficina.</p></div>
+        </div>
+        <div class="ba">
+          <div class="before">
+            <span class="ba-label"><span class="strike"></span> Antes</span>
+            <p>Se acumulan en la oficina sin decisión ni registro. Nadie sabe cuánta plata se pierde.</p>
+          </div>
+          <div class="after">
+            <span class="ba-label"><span class="check">✓</span> Ahora</span>
+            <p>Apta → vuelve al stock. No apta → se da de baja con la pérdida anotada. La nota de crédito se emite sola.</p>
+          </div>
+        </div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<!-- POR PERSONA -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">Qué gana cada uno</span>
+      <h2>Pensado para cómo trabaja cada uno</h2>
+    </div>
+    <div class="persons">
+      <div class="person reveal">
+        <div class="person-top"><span class="avatar">MA</span><div><b>Martín</b><span>Dirección</span></div></div>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Ve el stock y su valor en tiempo real, sin preguntarle a nadie.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Deja de perder capital en sobrestock mientras se corta la venta de otro producto.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Primer paso hacia saber la rentabilidad real de la operación.</li>
+        </ul>
+      </div>
+      <div class="person reveal">
+        <div class="person-top"><span class="avatar">TO</span><div><b>Tomás</b><span>Mercado Libre</span></div></div>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Se termina la sobreventa que hoy pasa 3 veces por semana.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Aviso de reponer a Full y Flex antes de quedarse sin stock.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Deja de perder publicaciones que venden bien por quiebres.</li>
+        </ul>
+      </div>
+      <div class="person reveal">
+        <div class="person-top"><span class="avatar">JA</span><div><b>Javier</b><span>Logística</span></div></div>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> No más cargar todo a mano en Contabilium: una foto y listo.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Mover stock es un toque y el remito sale solo.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Por fin sabe qué hay y en qué depósito, sin salir a contar.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARRANQUE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">Cómo arrancamos</span>
+      <h2>De a poco y sin riesgo</h2>
+      <p>Empezamos mirando, sin tocar nada, hasta que confíen en los números. Recién ahí operamos en vivo.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <span class="step-n">01</span>
+        <div class="step-body">
+          <h3>Espejo — solo mirar</h3>
+          <p>Conectamos el Centro de Stock a Contabilium en modo lectura. Muestra el stock real de los 4 depósitos, sin modificar nada. Ustedes comparan y confirman que los números cierran.</p>
+          <span class="step-tag">Riesgo cero</span>
+        </div>
+      </div>
+      <div class="step reveal">
+        <span class="step-n">02</span>
+        <div class="step-body">
+          <h3>Producto de prueba</h3>
+          <p>Con un producto de test hacemos un ingreso por foto y un movimiento entre depósitos, para ver el circuito completo funcionando sin tocar mercadería real.</p>
+          <span class="step-tag warn">Controlado</span>
+        </div>
+      </div>
+      <div class="step reveal">
+        <span class="step-n">03</span>
+        <div class="step-body">
+          <h3>En vivo</h3>
+          <p>Pasamos a facturas reales, remitos automáticos y ventas sincronizadas. Las devoluciones con nota de crédito quedan para el final, y la primera la validamos con el contador.</p>
+          <span class="step-tag">Ya operando</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CLOSE -->
+<section class="close reveal">
+  <div class="wrap" style="display:flex;flex-direction:column;align-items:center;gap:22px;">
+    <span class="eyebrow">El siguiente paso</span>
+    <h2>Un solo lugar que resuelve el stock de punta a punta.</h2>
+    <p>La solución ya está diseñada sobre lo que nos contaron. El paso siguiente es prender el modo espejo y que vean su propio stock, en vivo, en una sola pantalla.</p>
+    <div class="pill-row">
+      <span class="pill">Ingreso por foto</span>
+      <span class="pill">Remitos automáticos</span>
+      <span class="pill">Sin sobreventa</span>
+      <span class="pill">Devoluciones ordenadas</span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Centro de Stock · Propuesta para Innovalport / Cominarsa</p>
+    <p>Basado en el relevamiento de julio 2026</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      els.forEach(function (e) { e.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>

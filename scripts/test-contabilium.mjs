@@ -71,14 +71,12 @@ try {
   process.exit(1);
 }
 
-// Endpoints candidatos (los nombres varían según la colección Postman).
+// Endpoints (el de productos/conceptos está CONFIRMADO contra la API real;
+// el resto quedan como sondeo para futuras integraciones).
 const candidatos = [
-  "/api/productos?page=1&pageSize=5",
-  "/api/productos/search?pageSize=5",
-  "/api/depositos",
-  "/api/deposito",
-  "/api/comprobantes?page=1&pageSize=5",
-  "/api/stock",
+  "/api/conceptos/search?filtro=&pageSize=5&page=1", // CONFIRMADO: productos ("conceptos")
+  "/api/conceptos/18509830",                          // detalle de un concepto por Id
+  "/api/comprobantes/search?fechaDesde=2025-01-01&pageSize=5",
 ];
 
 console.log(`\n${c.bold}Endpoints${c.reset}`);

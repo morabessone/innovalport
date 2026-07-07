@@ -65,10 +65,10 @@ create table if not exists sku_aliases (
   alias       text not null,
   producto_id uuid not null references productos(id) on delete cascade,
   fuente      text not null default 'ocr',      -- ocr | manual
-  created_at  timestamptz not null default now(),
-  unique (lower(alias), producto_id)
+  created_at  timestamptz not null default now()
 );
 create index if not exists sku_aliases_alias_idx on sku_aliases (lower(alias));
+create unique index if not exists sku_aliases_uq on sku_aliases (lower(alias), producto_id);
 
 -- ---------------------------------------------------------------------------
 -- Remitos: TODO movimiento físico genera uno. "Un movimiento, un registro."

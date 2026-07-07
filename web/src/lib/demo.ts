@@ -13,7 +13,7 @@ export const demoDepositos: Deposito[] = [
 
 interface DemoProd {
   producto_id: string; sku: string; nombre: string; stock_minimo: number;
-  por: Record<string, number>;
+  por: Record<string, number>; activo?: boolean;
 }
 
 const prods: DemoProd[] = [
@@ -60,8 +60,14 @@ export const demo = {
         producto_id: p.producto_id, sku: p.sku, nombre: p.nombre,
         stock_minimo: p.stock_minimo, por_deposito: { ...p.por }, total,
         estado: estadoDe(total, p.stock_minimo),
+        activo: p.activo !== false,
       };
     });
+  },
+
+  bajaProducto(id: string, activo: boolean) {
+    const p = prods.find((x) => x.producto_id === id);
+    if (p) p.activo = activo;
   },
 
   remitos: () => [...remitos].sort((a, b) => b.numero_int - a.numero_int),

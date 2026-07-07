@@ -107,4 +107,9 @@ export const api = {
     if (!connected) return demo.decidirDevolucion(payload.devolucion_id, payload.apta, payload.deposito_destino_id, payload.valor_perdida);
     await callFn("acciones", { accion: "decidir_devolucion", payload });
   },
+
+  async bajaProducto(producto_id: string, activo: boolean) {
+    if (!connected) return demo.bajaProducto(producto_id, activo);
+    await callFn("acciones", { accion: "baja_producto", payload: { producto_id, activo } });
+  },
 };

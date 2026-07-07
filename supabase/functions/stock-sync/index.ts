@@ -1,17 +1,15 @@
 // ============================================================================
-// stock-sync — Fase 1 (solo lectura, riesgo cero)
+// stock-sync — Fase 1 (solo lectura de Contabilium, riesgo cero)
 // ----------------------------------------------------------------------------
-// Trae el catálogo y el stock desde Contabilium hacia el espejo (productos /
-// stock). NO escribe nada en Contabilium.
+// Contabilium expone el STOCK TOTAL por producto (campo Stock del "concepto"),
+// NO el desglose por depósito (verificado: no hay endpoint de depósitos y el
+// parámetro idDeposito se ignora). Por eso el reparto por depósito lo maneja el
+// Centro de Stock: esta sync trae el catálogo + el total, respeta lo que la app
+// asignó a GEN/FLX/FULL, y deja el remanente en OFI (Oficina = "sin asignar").
 //
-// Endpoints CONFIRMADOS contra la API real (rest.contabilium.com):
-//   * Auth:      POST /token  (client_credentials: email + API Key)
-//   * Productos: GET  /api/conceptos/search?filtro=&pageSize=100&page=N
-//                -> { Items:[{ Id, Codigo(SKU), Nombre, CostoInterno,
-//                     PrecioFinal, Stock, StockMinimo, Estado, Tipo }], TotalPage }
-// La API expone el STOCK TOTAL por producto (campo Stock), no el desglose por
-// depósito, así que el total se carga en Genpol (el depósito general). Cuando se
-// confirme un endpoint de stock por depósito, se reemplaza acá.
+// Endpoints confirmados:
+//   POST /token                                         (client_credentials)
+//   GET  /api/conceptos/search?filtro=&pageSize=100&page=N
 // ============================================================================
 import { preflight, json } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
@@ -19,7 +17,7 @@ import { serviceClient } from "../_shared/supabase.ts";
 const BASE = Deno.env.get("CONTABILIUM_BASE_URL") ?? "https://rest.contabilium.com";
 const CID = Deno.env.get("CONTABILIUM_CLIENT_ID") ?? "";
 const CS = Deno.env.get("CONTABILIUM_CLIENT_SECRET") ?? "";
-const DEP_GENERAL = "GEN"; // Genpol = depósito general donde se refleja el stock total
+const ASIGNABLES = ["GEN", "FLX", "FULL"]; // lo que se asigna explícitamente; OFI = remanente
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -52,10 +50,13 @@ Deno.serve(async (req) => {
   if (pf) return pf;
   const db = serviceClient();
   try {
-    const { data: dep } = await db.from("depositos").select("id").eq("codigo", DEP_GENERAL).single();
-    const depId = dep?.id as string | undefined;
+    const { data: deps } = await db.from("depositos").select("id, codigo");
+    const byCode: Record<string, string> = {};
+    for (const dp of deps ?? []) byCode[dp.codigo] = dp.id;
+    const ofiId = byCode["OFI"];
+    const asignadosIds = ASIGNABLES.map((c) => byCode[c]).filter(Boolean);
 
-    let page = 1, productos = 0, stockRows = 0, totalPages = 1;
+    let page = 1, productos = 0, totalPages = 1;
     do {
       const data = await getPage(page);
       totalPages = Number(data.TotalPage ?? 1);
@@ -64,6 +65,7 @@ Deno.serve(async (req) => {
         if (String(it.Tipo ?? "") !== "Producto") continue;
         const sku = String(it.Codigo ?? "").trim();
         if (!sku) continue;
+        const total = Math.round(Number(it.Stock ?? 0));
         const { data: prod } = await db.from("productos").upsert({
           sku,
           nombre: String(it.Nombre ?? ""),
@@ -75,27 +77,29 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }, { onConflict: "sku" }).select("id").single();
         productos++;
-        if (prod && depId) {
+        if (prod && ofiId) {
+          const { data: st } = await db.from("stock").select("cantidad, deposito_id").eq("producto_id", prod.id);
+          let placed = 0;
+          for (const row of st ?? []) if (asignadosIds.includes(row.deposito_id)) placed += Number(row.cantidad);
           await db.from("stock").upsert({
             producto_id: prod.id,
-            deposito_id: depId,
-            cantidad: Math.round(Number(it.Stock ?? 0)),
+            deposito_id: ofiId,
+            cantidad: Math.max(0, total - placed),
             updated_at: new Date().toISOString(),
           }, { onConflict: "producto_id,deposito_id" });
-          stockRows++;
         }
       }
       page++;
-      await sleep(400);
+      await sleep(350);
     } while (page <= totalPages && page <= 50);
 
     await db.from("sync_estado").upsert({
       job: "catalogo",
       ultima_ok: new Date().toISOString(),
-      detalle: { productos, stock: stockRows },
+      detalle: { productos },
       updated_at: new Date().toISOString(),
     });
-    return json({ ok: true, productos, stock: stockRows });
+    return json({ ok: true, productos });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }

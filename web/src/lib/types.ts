@@ -15,6 +15,7 @@ export interface StockConsolidado {
   total: number;
   por_deposito: Record<string, number>;
   estado: EstadoStock;
+  activo: boolean;
 }
 
 export interface Remito {

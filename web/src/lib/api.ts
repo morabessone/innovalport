@@ -1,0 +1,110 @@
+// Capa de acceso a datos. Si hay credenciales de Supabase, habla con el backend
+// real (lecturas por supabase-js, escrituras por Edge Functions). Si no, usa el
+// MODO DEMO en memoria. Los componentes usan siempre esta interfaz.
+import { supabase, isConnected, functionsBase, anonKey } from "./supabase.ts";
+import { demo } from "./demo.ts";
+import type {
+  Deposito, StockConsolidado, Remito, Devolucion, IngresoItem,
+} from "./types.ts";
+
+export const connected = isConnected;
+
+async function callFn<T = unknown>(fn: string, body: unknown): Promise<T> {
+  const res = await fetch(`${functionsBase}/${fn}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${anonKey}`,
+      "apikey": anonKey,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data?.ok === false) {
+    throw new Error(data?.error ?? `Error ${res.status} en ${fn}`);
+  }
+  return data as T;
+}
+
+export const api = {
+  connected,
+
+  async lastSync(): Promise<string | null> {
+    if (!connected) return new Date().toISOString();
+    const { data } = await supabase!.from("sync_estado").select("ultima_ok").eq("job", "catalogo").maybeSingle();
+    return data?.ultima_ok ?? null;
+  },
+
+  async syncNow(): Promise<void> {
+    if (!connected) return;
+    await callFn("stock-sync", {});
+  },
+
+  async depositos(): Promise<Deposito[]> {
+    if (!connected) return demo.depositos();
+    const { data, error } = await supabase!.from("depositos").select("id, codigo, nombre, es_full").order("orden");
+    if (error) throw error;
+    return data as Deposito[];
+  },
+
+  async stock(): Promise<StockConsolidado[]> {
+    if (!connected) return demo.stock();
+    const { data, error } = await supabase!.from("v_stock_consolidado").select("*").order("sku");
+    if (error) throw error;
+    return data as StockConsolidado[];
+  },
+
+  async remitos(limit = 20): Promise<Remito[]> {
+    if (!connected) return demo.remitos().slice(0, limit);
+    const { data, error } = await supabase!
+      .from("remitos").select("*").order("created_at", { ascending: false }).limit(limit);
+    if (error) throw error;
+    return data as Remito[];
+  },
+
+  async devoluciones(): Promise<Devolucion[]> {
+    if (!connected) return demo.devoluciones();
+    const { data, error } = await supabase!
+      .from("devoluciones").select("*").order("created_at", { ascending: false }).limit(50);
+    if (error) throw error;
+    return data as Devolucion[];
+  },
+
+  // ---- acciones ----
+  async moverStock(origen: string, destino: string, items: { producto_id: string; cantidad: number }[]) {
+    if (!connected) return demo.moverStock(origen, destino, items);
+    await callFn("acciones", {
+      accion: "mover_stock",
+      payload: { origen_deposito_id: origen, destino_deposito_id: destino, items },
+    });
+  },
+
+  async ocrIngreso(imageB64: string, mediaType: string, proveedor?: string, tipo = "local"): Promise<{ ingreso_id: string; items: IngresoItem[] }> {
+    if (!connected) return { ingreso_id: "demo", items: demo.ocr() };
+    return callFn("ocr-ingreso", { image_base64: imageB64, media_type: mediaType, proveedor, tipo });
+  },
+
+  async confirmarIngreso(ingresoId: string, destino: string, items: { id: string; producto_id: string; cantidad: number; aprender_alias?: string }[]) {
+    if (!connected) return demo.confirmarIngreso(destino, items);
+    await callFn("acciones", {
+      accion: "confirmar_ingreso",
+      payload: { ingreso_id: ingresoId, deposito_destino_id: destino, items },
+    });
+  },
+
+  async cargarDevolucion(payload: {
+    producto_id?: string; sku?: string; cantidad: number; canal: string;
+    venta_ref?: string; motivo?: string; deposito_origen_id: string;
+  }) {
+    if (!connected) return demo.cargarDevolucion(payload);
+    await callFn("acciones", { accion: "cargar_devolucion", payload });
+  },
+
+  async decidirDevolucion(payload: {
+    devolucion_id: string; apta: boolean; deposito_destino_id?: string;
+    valor_perdida?: number; cb_comprobante_id?: string;
+  }) {
+    if (!connected) return demo.decidirDevolucion(payload.devolucion_id, payload.apta, payload.deposito_destino_id, payload.valor_perdida);
+    await callFn("acciones", { accion: "decidir_devolucion", payload });
+  },
+};

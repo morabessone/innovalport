@@ -1,0 +1,25 @@
+# dependencias
+node_modules/
+web/node_modules/
+
+# build
+web/dist/
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+
+# entorno / secretos — NUNCA commitear credenciales
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.*
+!web/.env.example
+
+# supabase local
+supabase/.branches/
+supabase/.temp/
+
+# sistema
+.DS_Store
+*.log

@@ -47,26 +47,37 @@ Lo que se construye es **una capa por encima de Contabilium** que:
 
 Los puntos donde en producción se llama a las APIs están marcados con `[API]` en el código.
 
-## 5. Artefactos que se diseñaron en la sesión previa
+## 5. Artefactos (reconstruidos en este repo)
 
-| Artefacto | Qué es | Estado en este repo |
+El código se reconstruyó desde estas especificaciones y desde el relevamiento.
+Estado actual:
+
+| Artefacto | Qué es | Ubicación |
 |---|---|---|
-| `centro-de-stock.jsx` | Panel React funcional (modo demo) con los 4 flujos | ❌ No está |
-| `arquitectura-centro-stock.md` | Documento de arquitectura + hallazgos de investigación | ❌ No está (su contenido se preserva acá) |
-| `schema.sql` | Base completa en Supabase (cola, devoluciones, remitos, aliases SKU, pérdidas, auditoría) | ❌ No está |
-| `seed.sql` | Datos semilla | ❌ No está |
-| `contabilium-worker.ts` | Edge Function worker (token caching, throttle, backoff 429) | ❌ No está |
-| `ocr-ingreso.ts` | Edge Function OCR de facturas (Claude + matching SKU) | ❌ No está |
-| `scripts/test-contabilium.mjs` | Script de test de solo lectura (valida token, sondea endpoints, lista depósitos/productos) | ❌ No está |
-| `README`, `.env.example` | Instrucciones de puesta en marcha | ❌ No está |
+| Panel React (4 flujos, modo demo) | Panel único de operación | `web/` |
+| Esquema de base | Tablas espejo + capa operativa | `supabase/migrations/0001_init.sql` |
+| RLS | Lectura anon, escritura solo por functions | `supabase/migrations/0002_rls.sql` |
+| Funciones SQL | Ajuste de stock espejo atómico | `supabase/migrations/0003_functions.sql` |
+| Seed | 4 depósitos + SKUs de ejemplo | `supabase/seed.sql` |
+| `stock-sync` | Lee Contabilium → espejo (solo lectura) | `supabase/functions/stock-sync/` |
+| `contabilium-worker` | Drena la cola → escribe en Contabilium (throttle, backoff 429) | `supabase/functions/contabilium-worker/` |
+| `ocr-ingreso` | Foto de factura → renglones (Claude + matching SKU) | `supabase/functions/ocr-ingreso/` |
+| `acciones` | Movimiento / ingreso / devoluciones | `supabase/functions/acciones/` |
+| Cliente Contabilium | Token cache + endpoints configurables | `supabase/functions/_shared/contabilium.ts` |
+| Script de sondeo | Test de solo lectura de la API | `scripts/test-contabilium.mjs` |
+| README + `.env.example` | Puesta en marcha end-to-end | raíz del repo |
 
-## 6. ⚠️ Estado real: la brecha
+## 6. Estado real: brecha cerrada
 
-En la sesión previa, Claude **no pudo pushear el código** al repo `morabessone/innovalport` porque no tenía credenciales de GitHub. Ofreció dos caminos (subir un zip manualmente, o pasar un fine-grained PAT). **Ninguno se concretó: el repositorio estaba completamente vacío al iniciar esta sesión.**
+En la sesión previa (claude.ai) el código se diseñó pero **nunca se pusheó** al
+repo (Claude no tenía credenciales de GitHub), y el repositorio quedó vacío. En
+esta sesión se **reconstruyó end-to-end** a partir de estas especificaciones y del
+relevamiento, y quedó commiteado. Difiere en detalles del original de aquella
+sesión, pero respeta la misma arquitectura. El build de la web compila y corre.
 
-Consecuencia: **el código de arriba no existe en ninguna parte accesible desde acá** — solo su descripción. Para materializarlo hay dos opciones:
-- **(A)** Que subas el zip que te habías descargado en esa sesión (si lo conservás) — es el código original tal como se diseñó.
-- **(B)** Reconstruirlo desde cero en este repo a partir de estas especificaciones (divergerá en detalles del original, pero respeta el diseño).
+Falta para producción: aplicar el esquema en un proyecto Supabase real, deployar
+las functions, cargar credenciales, y confirmar los endpoints `[VERIFICAR]` de
+Contabilium con el sondeo. Detalle en el README y en §8.
 
 ## 7. Plan de testing (sin sandbox — todo es producción)
 

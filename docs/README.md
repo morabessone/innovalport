@@ -19,5 +19,5 @@ Base de conocimiento del negocio y diseño de las soluciones a construir. Todo l
 - ✅ Relevamiento de 4 personas procesado y guardado.
 - ✅ Contexto de negocio sintetizado.
 - ✅ Solución de stock diseñada al 100% (operativa + técnica).
-- ⚠️ **El código del "Centro de Stock" se diseñó en una sesión previa pero nunca llegó al repo** (ver `soluciones/arquitectura-tecnica-stock.md` §6). Es la brecha a cerrar para pasar a construcción.
+- ✅ **Código del "Centro de Stock" reconstruido end-to-end** (panel React + backend Supabase + Edge Functions). Ver [`../README.md`](../README.md) para correrlo, conectarlo y deployarlo. El build compila y corre en modo demo.
 - ⏳ Pendiente de relevar: Santiago ("el Negro", urgente por transición de importación) y Bautista (capital).

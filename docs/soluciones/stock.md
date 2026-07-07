@@ -1,7 +1,9 @@
 # Solución de Stock — Innovalport / Cominarsa
 
-Estado: **diseño completo (100% de la forma conceptual), pendiente de decisiones de Martín para pasar a construcción.**
+Estado: **diseño completo (100% de la forma conceptual), arquitectura técnica resuelta, pendiente de materializar el código en el repo y de decisiones operativas de Martín.**
 Fuente: relevamiento a Javier (fuente principal), cruzado con Martín y Tomás. Ver [`../relevamiento/`](../relevamiento/).
+
+> **La arquitectura técnica de esta solución (APIs, stack, artefactos) ya está resuelta** en una sesión de diseño previa — ver [`./arquitectura-tecnica-stock.md`](./arquitectura-tecnica-stock.md). Este documento es el diagnóstico operativo (as-is → to-be) desde el relevamiento; aquel es la construcción técnica desde la investigación de las APIs. Se leen juntos.
 
 ## 0. Por qué el stock es la prioridad #1
 
@@ -55,6 +57,8 @@ Cada una de estas está confirmada por al menos dos fuentes independientes del r
 
 Esto implica que **todo movimiento físico de mercadería, sin excepción, genera un remito digital en el momento**, sin importar el depósito de origen/destino (incluida Oficina → cualquier depósito, que hoy es la excepción no registrada). Sin remito, la mercadería "no se movió" a los ojos del sistema — esa es la regla que hay que instalar culturalmente en el equipo, no solo técnicamente.
 
+**Cómo se materializa (decidido en la arquitectura técnica):** la fuente de verdad es **Contabilium** (que ya tiene el stock y las integraciones nativas con ML/TN). No se reemplaza. Se construye un **"Centro de Stock"** — un panel único encima de Contabilium — que elimina la carga manual y hace que registrar un movimiento sea un tap (foto de factura con OCR, remito de movimiento automático, pipeline de devoluciones). El equipo deja de "cargar cosas en Contabilium a mano"; el Centro de Stock lo hace por ellos vía API. Ver detalle en [`./arquitectura-tecnica-stock.md`](./arquitectura-tecnica-stock.md).
+
 ## 4. Modelo de datos objetivo
 
 **Depósitos** (dimensión fija, la misma que ya usa Contabilium):
@@ -98,7 +102,7 @@ Esto implica que **todo movimiento físico de mercadería, sin excepción, gener
 2. Formalizar cadencia semanal real (hoy es más bien quincenal según volumen) y criterio escrito de apto/no apto (hoy es tácito entre Carla, Martín y Javier).
 3. Definir y registrar el destino de las no aptas (outlet, repuestos, descarte — las 3 opciones que el propio equipo identificó) en vez de acumularlas sin decisión.
 4. Registrar la pérdida asociada a cada no apta (hoy: "no se anota en ningún lado").
-5. Resolver el estado real de la nota de crédito (Carla confirma que en ML casi nunca se emite porque la plataforma resuelve directo; para Tienda Nube no hay procedimiento definido todavía).
+5. Nota de crédito: el "punto a chequear" original **queda resuelto técnicamente** — Contabilium tiene endpoints `AnularComprobanteRápido` (NC a partir de un comprobante existente) y `AnularComprobante Manual/Parcial` (devoluciones parciales), así que el Centro de Stock puede emitirla automáticamente al marcar una devolución como apta. Falta definir el criterio de negocio: en ML casi nunca hace falta (la plataforma resuelve el reintegro directo, según Carla); para Tienda Nube no hay procedimiento definido todavía. La primera NC automática se valida con el contador (Claudio).
 
 ### 5.5 Conteo físico de inventario (cycle count)
 1. Instalar un conteo físico periódico real (nunca se hizo). Empezar simple: conteo rotativo por depósito, no los 4 al mismo tiempo.
@@ -135,8 +139,8 @@ Esto implica que **todo movimiento físico de mercadería, sin excepción, gener
 
 ## 8. Decisiones que necesitamos de Martín antes de construir
 
-1. ¿La fuente de verdad va a ser Contabilium mismo (con disciplina de uso + eventualmente su API) o una capa propia que sincroniza con Contabilium? Contabilium ya tiene API — a evaluar si alcanza o si sus limitaciones (falta de capacitación del equipo, integración ML parcial) justifican una capa intermedia.
-2. ¿Quién es el segundo responsable de carga en Contabilium además de Javier? Hoy es un punto único de falla declarado por el propio Javier ("casi todos los movimientos de Contabilium [los hago yo]").
+1. ~~¿La fuente de verdad va a ser Contabilium mismo o una capa propia?~~ **RESUELTO** (arquitectura técnica): Contabilium es la fuente de verdad, con una capa de operación ("Centro de Stock") encima. No se reconstruyen las integraciones nativas ML/TN. Ver [`./arquitectura-tecnica-stock.md`](./arquitectura-tecnica-stock.md).
+2. ¿Quién es el segundo responsable de carga además de Javier? Hoy es un punto único de falla declarado por el propio Javier ("casi todos los movimientos de Contabilium [los hago yo]"). El Centro de Stock reduce el riesgo (cualquiera puede cargar con una foto), pero conviene definir un backup humano.
 3. Confirmar destino real de las devoluciones no aptas (outlet / repuestos / descarte) — quién decide caso a caso y con qué margen de autonomía sin consultar a Martín.
 4. Acceso a Contabilium (usuario colaborador / API key de solo lectura para empezar) para poder diagnosticar el estado real de datos antes de definir el modelo final.
 5. Confirmar dirección real de la Oficina (Olivos según Martín, Vicente López según Javier — inconsistencia menor a resolver).

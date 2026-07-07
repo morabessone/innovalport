@@ -8,6 +8,7 @@ Se guarda por persona, sin resumir, porque la evidencia y el vocabulario textual
 - [javier.md](./javier.md) — operaciones, depósitos, movimiento de stock y retiros. **La fuente principal para la solución de stock.**
 - [tomas.md](./tomas.md) — Mercado Libre, publicaciones, pauta y sincronización de stock con ML.
 - [carla.md](./carla.md) — post-venta, atención al cliente, devoluciones y redes sociales.
+- [chat-diseno-inicial.md](./chat-diseno-inicial.md) — transcripción de la sesión previa en claude.ai: objetivo del agente "segunda cabeza del negocio", contexto original de la usuaria, y las decisiones de la solución de stock. Fuente del cuestionario que originó los relevamientos de arriba.
 
 La síntesis transversal de estos 4 documentos vive en [`../contexto-negocio.md`](../contexto-negocio.md). El diseño de la solución de stock, que es el foco actual, vive en [`../soluciones/stock.md`](../soluciones/stock.md).
 

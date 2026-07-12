@@ -31,7 +31,7 @@ const remitos: Remito[] = [
 const devoluciones: Devolucion[] = [
   { id: "dev1", sku: "CAM-WIFI-PORT", producto_id: "p4", cantidad: 1, canal: "ML",
     venta_ref: "2000004512345", motivo: "No configura wifi", estado: "en_oficina",
-    valor_perdida: null, created_at: hoursAgo(20) },
+    valor_perdida: null, destino_no_apta: null, foto_url: null, created_at: hoursAgo(20) },
 ];
 function mkRemito(tipo: string, origen: string | null, destino: string | null, nota: string): Remito {
   return {
@@ -68,6 +68,28 @@ export const demo = {
   bajaProducto(id: string, activo: boolean) {
     const p = prods.find((x) => x.producto_id === id);
     if (p) p.activo = activo;
+  },
+
+  recibirDevolucion(id: string) {
+    const dev = devoluciones.find((x) => x.id === id);
+    if (dev) dev.estado = "en_oficina";
+  },
+
+  ajusteInventario(producto_id: string, deposito_id: string, cantidad: number) {
+    const p = prods.find((x) => x.producto_id === producto_id);
+    if (p) p.por[codigo(deposito_id)] = Math.max(0, Math.round(cantidad));
+  },
+
+  deshacerRemito(id: string) {
+    const i = remitos.findIndex((r) => r.id === id);
+    if (i >= 0) remitos[i].estado = "anulado";
+  },
+
+  auditoria() {
+    return remitos.slice(-20).reverse().map((r) => ({
+      id: r.id, entidad: "remito", entidad_id: r.id, accion: r.tipo,
+      actor: "demo", created_at: r.created_at,
+    }));
   },
 
   remitos: () => [...remitos].sort((a, b) => b.numero_int - a.numero_int),
@@ -113,7 +135,8 @@ export const demo = {
       id: "dev" + Math.random().toString(36).slice(2, 7),
       sku: d.sku ?? null, producto_id: d.producto_id ?? null, cantidad: d.cantidad ?? 1,
       canal: d.canal ?? null, venta_ref: d.venta_ref ?? null, motivo: d.motivo ?? null,
-      estado: "retiro_generado", valor_perdida: null, created_at: new Date().toISOString(),
+      estado: "retiro_generado", valor_perdida: null, destino_no_apta: null, foto_url: null,
+      created_at: new Date().toISOString(),
     };
     devoluciones.push(dev);
     remitos.push(mkRemito("devolucion_retiro", d.deposito_origen_id ?? null, "d-ofi", "Retiro de devolución"));

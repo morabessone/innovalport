@@ -39,6 +39,17 @@ export interface Devolucion {
   motivo: string | null;
   estado: string;    // cargada | retiro_generado | en_oficina | apta | no_apta
   valor_perdida: number | null;
+  destino_no_apta: string | null;
+  foto_url: string | null;
+  created_at: string;
+}
+
+export interface Auditoria {
+  id: string;
+  entidad: string;
+  entidad_id: string | null;
+  accion: string;
+  actor: string | null;
   created_at: string;
 }
 

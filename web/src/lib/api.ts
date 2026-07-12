@@ -4,7 +4,7 @@
 import { supabase, isConnected, functionsBase, anonKey } from "./supabase.ts";
 import { demo } from "./demo.ts";
 import type {
-  Deposito, StockConsolidado, Remito, Devolucion, IngresoItem,
+  Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria,
 } from "./types.ts";
 
 export const connected = isConnected;
@@ -84,7 +84,7 @@ export const api = {
     return callFn("ocr-ingreso", { image_base64: imageB64, media_type: mediaType, proveedor, tipo });
   },
 
-  async confirmarIngreso(ingresoId: string, destino: string, items: { id: string; producto_id: string; cantidad: number; aprender_alias?: string }[]) {
+  async confirmarIngreso(ingresoId: string, destino: string, items: { id?: string; producto_id: string; cantidad: number; aprender_alias?: string }[]) {
     if (!connected) return demo.confirmarIngreso(destino, items);
     await callFn("acciones", {
       accion: "confirmar_ingreso",
@@ -94,7 +94,7 @@ export const api = {
 
   async cargarDevolucion(payload: {
     producto_id?: string; sku?: string; cantidad: number; canal: string;
-    venta_ref?: string; motivo?: string; deposito_origen_id: string;
+    venta_ref?: string; motivo?: string; deposito_origen_id: string; foto_url?: string;
   }) {
     if (!connected) return demo.cargarDevolucion(payload);
     await callFn("acciones", { accion: "cargar_devolucion", payload });
@@ -102,7 +102,7 @@ export const api = {
 
   async decidirDevolucion(payload: {
     devolucion_id: string; apta: boolean; deposito_destino_id?: string;
-    valor_perdida?: number; cb_comprobante_id?: string;
+    valor_perdida?: number; destino_no_apta?: string; cb_comprobante_id?: string;
   }) {
     if (!connected) return demo.decidirDevolucion(payload.devolucion_id, payload.apta, payload.deposito_destino_id, payload.valor_perdida);
     await callFn("acciones", { accion: "decidir_devolucion", payload });
@@ -111,5 +111,37 @@ export const api = {
   async bajaProducto(producto_id: string, activo: boolean) {
     if (!connected) return demo.bajaProducto(producto_id, activo);
     await callFn("acciones", { accion: "baja_producto", payload: { producto_id, activo } });
+  },
+
+  async recibirDevolucion(devolucion_id: string) {
+    if (!connected) return demo.recibirDevolucion(devolucion_id);
+    await callFn("acciones", { accion: "recibir_devolucion", payload: { devolucion_id } });
+  },
+
+  async ajusteInventario(producto_id: string, deposito_id: string, cantidad_contada: number) {
+    if (!connected) return demo.ajusteInventario(producto_id, deposito_id, cantidad_contada);
+    await callFn("acciones", { accion: "ajuste_inventario", payload: { producto_id, deposito_id, cantidad_contada } });
+  },
+
+  async deshacerRemito(remito_id: string) {
+    if (!connected) return demo.deshacerRemito(remito_id);
+    await callFn("acciones", { accion: "deshacer_remito", payload: { remito_id } });
+  },
+
+  async auditoria(limit = 60): Promise<Auditoria[]> {
+    if (!connected) return demo.auditoria();
+    const { data, error } = await supabase!
+      .from("v_auditoria").select("*").order("created_at", { ascending: false }).limit(limit);
+    if (error) throw error;
+    return data as Auditoria[];
+  },
+
+  // Sube una foto de devolución al storage y devuelve la URL pública.
+  async subirFoto(file: File): Promise<string | null> {
+    if (!connected || !supabase) return null;
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${file.name}`;
+    const { error } = await supabase.storage.from("devoluciones").upload(path, file, { upsert: false });
+    if (error) throw error;
+    return supabase.storage.from("devoluciones").getPublicUrl(path).data.publicUrl;
   },
 };

@@ -1,18 +1,24 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./lib/api.ts";
 import { Panel } from "./views/Panel.tsx";
+import { Reponer } from "./views/Reponer.tsx";
 import { Ingreso } from "./views/Ingreso.tsx";
 import { Movimiento } from "./views/Movimiento.tsx";
 import { Devoluciones } from "./views/Devoluciones.tsx";
+import { Inventario } from "./views/Inventario.tsx";
+import { Historial } from "./views/Historial.tsx";
 
-type Tab = "panel" | "ingreso" | "movimiento" | "devoluciones";
+type Tab = "panel" | "reponer" | "ingreso" | "movimiento" | "devoluciones" | "inventario" | "historial";
 type Theme = "auto" | "light" | "dark";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "panel", label: "Panel" },
+  { id: "reponer", label: "Reponer" },
   { id: "ingreso", label: "Ingreso" },
   { id: "movimiento", label: "Movimiento" },
   { id: "devoluciones", label: "Devoluciones" },
+  { id: "inventario", label: "Inventario" },
+  { id: "historial", label: "Historial" },
 ];
 
 const THEME_NEXT: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };
@@ -92,9 +98,12 @@ export function App() {
       </header>
 
       {tab === "panel" && <Panel notify={notify} />}
+      {tab === "reponer" && <Reponer notify={notify} />}
       {tab === "ingreso" && <Ingreso notify={notify} />}
       {tab === "movimiento" && <Movimiento notify={notify} />}
       {tab === "devoluciones" && <Devoluciones notify={notify} />}
+      {tab === "inventario" && <Inventario notify={notify} />}
+      {tab === "historial" && <Historial />}
 
       {toast && (
         <div className="toast" role="status">

@@ -14,6 +14,8 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [filas, setFilas] = useState<Fila[]>([]);
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [mprod, setMprod] = useState("");
+  const [mqty, setMqty] = useState(1);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -44,6 +46,19 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
     setFilas((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
   }
 
+  function agregarManual() {
+    if (!mprod) return notify("Elegí un producto");
+    const p = productos.find((x) => x.producto_id === mprod);
+    setFilas((fs) => [...fs, {
+      id: "man-" + Math.random().toString(36).slice(2, 8),
+      descripcion: p?.sku ?? "manual", sku_detectado: p?.sku ?? null,
+      producto_id: mprod, cantidad: Math.max(1, mqty), costo_unit: null,
+      confianza: 1, confirmado: true, confirmar: true,
+    }]);
+    setMqty(1);
+    notify(`${p?.sku} agregado`);
+  }
+
   const listos = filas.filter((f) => f.confirmar && f.producto_id && f.cantidad > 0);
 
   async function confirmar() {
@@ -51,9 +66,10 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
     setSaving(true);
     try {
       await api.confirmarIngreso(
-        ingresoId ?? "demo", destino,
+        ingresoId ?? "manual", destino,
         listos.map((f) => ({
-          id: f.id, producto_id: f.producto_id!, cantidad: f.cantidad,
+          id: f.id.startsWith("man-") ? undefined : f.id,
+          producto_id: f.producto_id!, cantidad: f.cantidad,
           aprender_alias: f.confianza < 0.9 ? f.descripcion : undefined,
         })),
       );
@@ -103,6 +119,24 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
           {reading ? "Leyendo factura…" : "📷 Subir foto de factura / remito"}
         </button>
         {!api.connected && <span className="muted" style={{ marginLeft: 12 }}>(en demo, usa una factura de ejemplo)</span>}
+      </div>
+
+      <div className="card card-pad">
+        <h3 style={{ fontSize: "1rem", marginBottom: 10 }}>…o cargá a mano</h3>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div className="field grow" style={{ marginBottom: 0, minWidth: 180 }}>
+            <label>Producto</label>
+            <select className="select" value={mprod} onChange={(e) => setMprod(e.target.value)}>
+              <option value="">— elegí —</option>
+              {productos.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku} · {p.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>Cantidad</label>
+            <input className="input qtybox" type="number" min={1} value={mqty} onChange={(e) => setMqty(Math.max(1, Number(e.target.value) || 1))} />
+          </div>
+          <button className="btn" onClick={agregarManual}>＋ Agregar</button>
+        </div>
       </div>
 
       {filas.length > 0 && (

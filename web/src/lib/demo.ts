@@ -56,9 +56,12 @@ export const demo = {
   stock(): StockConsolidado[] {
     return prods.map((p) => {
       const total = Object.values(p.por).reduce((a, b) => a + b, 0);
+      const pubFull = p.por.FULL ?? 0;
+      const pubFlex = Math.min(p.por.FLX ?? 0, 6); // demo: algo publicado en Flex
       return {
         producto_id: p.producto_id, sku: p.sku, nombre: p.nombre,
         stock_minimo: p.stock_minimo, por_deposito: { ...p.por }, total,
+        por_canal: { ml_full: pubFull, ml_flex: pubFlex },
         estado: estadoDe(total, p.stock_minimo),
         activo: p.activo !== false,
       };

@@ -49,9 +49,25 @@ export const api = {
 
   async stock(): Promise<StockConsolidado[]> {
     if (!connected) return demo.stock();
-    const { data, error } = await supabase!.from("v_stock_consolidado").select("*").order("sku");
+    const { data, error } = await supabase!.from("v_stock_canales").select("*").order("sku");
     if (error) throw error;
-    return data as StockConsolidado[];
+    return (data as Record<string, unknown>[]).map((r) => {
+      const total = Number(r.total ?? 0);
+      const min = Number(r.stock_minimo ?? 0);
+      return {
+        producto_id: r.producto_id, sku: r.sku, nombre: r.nombre,
+        stock_minimo: min, total,
+        por_deposito: (r.por_deposito ?? {}) as Record<string, number>,
+        por_canal: (r.por_canal ?? {}) as Record<string, number>,
+        activo: Boolean(r.activo),
+        estado: total <= 0 ? "sin_stock" : total <= min ? "reponer" : "ok",
+      } as StockConsolidado;
+    });
+  },
+
+  async syncCanales(): Promise<void> {
+    if (!connected) return;
+    await callFn("canal-sync", {});
   },
 
   async remitos(limit = 20): Promise<Remito[]> {

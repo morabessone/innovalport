@@ -225,6 +225,12 @@ input, select { font-family: inherit; }
 
 .danger { color: var(--bad); }
 
+/* columnas agrupadas (Panel) */
+.tbl.grouped thead .grp th { font-family: var(--display); font-size: .58rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 800; padding: 8px 8px 3px; text-align: center; border-bottom: 0; background: var(--card); color: var(--ink-faint); }
+.tbl.grouped thead .grp th.gdep { color: var(--cyan); }
+.tbl.grouped thead .grp th.gpub { color: var(--accent); }
+.tbl .divl { border-left: 1px dashed var(--line-strong); }
+
 /* Reponer */
 .repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .repo-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }

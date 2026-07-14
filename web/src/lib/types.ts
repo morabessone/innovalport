@@ -14,6 +14,7 @@ export interface StockConsolidado {
   stock_minimo: number;
   total: number;
   por_deposito: Record<string, number>;
+  por_canal: Record<string, number>;   // ml_full, ml_flex
   estado: EstadoStock;
   activo: boolean;
 }

@@ -100,7 +100,24 @@ Deno.serve(async (req) => {
     const rows = [...agg.values()].map((v) => ({ producto_id: v.producto_id, canal: v.canal, publicado: v.qty, listing_ref: v.ref, updated_at: new Date().toISOString() }));
     if (rows.length) await d.from("canal_stock").upsert(rows, { onConflict: "producto_id,canal" });
 
-    await d.from("canal_config").update({ meta: { ultima_sync: new Date().toISOString(), items: ids.length, publicaciones_matcheadas: matched } }).eq("tipo", "ml");
+    // Full físico = publicado en Full (ML administra ese depósito). Se refleja el
+    // valor en el depósito FULL y se rebalancea contra OFI manteniendo el total.
+    const { data: deps } = await d.from("depositos").select("id, codigo");
+    const depBy: Record<string, string> = {};
+    for (const x of deps ?? []) depBy[x.codigo] = x.id;
+    const now = new Date().toISOString();
+    for (const v of agg.values()) {
+      if (v.canal !== "ml_full" || !depBy.FULL || !depBy.OFI) continue;
+      const { data: st } = await d.from("stock").select("deposito_id, cantidad").eq("producto_id", v.producto_id);
+      const cur: Record<string, number> = {};
+      for (const r of st ?? []) cur[r.deposito_id] = Number(r.cantidad);
+      const total = Object.values(cur).reduce((a, b) => a + b, 0);
+      const otros = (cur[depBy.FLX] ?? 0) + (cur[depBy.GEN] ?? 0);
+      await d.from("stock").upsert({ producto_id: v.producto_id, deposito_id: depBy.FULL, cantidad: v.qty, updated_at: now }, { onConflict: "producto_id,deposito_id" });
+      await d.from("stock").upsert({ producto_id: v.producto_id, deposito_id: depBy.OFI, cantidad: Math.max(0, total - v.qty - otros), updated_at: now }, { onConflict: "producto_id,deposito_id" });
+    }
+
+    await d.from("canal_config").update({ meta: { ultima_sync: now, items: ids.length, publicaciones_matcheadas: matched } }).eq("tipo", "ml");
     return json({ ok: true, items: ids.length, matcheadas: matched, filas: rows.length });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);

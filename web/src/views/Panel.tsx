@@ -33,9 +33,18 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
   const [q, setQ] = useState("");
   const [estado, setEstado] = useState("todos");
   const [deposito, setDeposito] = useState("todos");
+  const [pubFiltro, setPubFiltro] = useState("todos");
   const [verInactivos, setVerInactivos] = useState(false);
   const [soloProblemas, setSoloProblemas] = useState(false);
   const [trabajando, setTrabajando] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<string>("sku");
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
+
+  function ordenar(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === 1 ? -1 : 1));
+    else { setSortKey(key); setSortDir(key === "sku" || key === "nombre" ? 1 : -1); }
+  }
+  const flechita = (key: string) => (sortKey === key ? (sortDir === 1 ? " ▲" : " ▼") : "");
 
   async function load() {
     setLoading(true);
@@ -66,17 +75,39 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
 
   const conReconc = useMemo(() => stock.map((s) => ({ s, pub: reconciliar(s) })), [stock]);
 
+  function valorOrden({ s, pub }: { s: StockConsolidado; pub: Pub }): string | number {
+    switch (sortKey) {
+      case "sku": return s.sku.toLowerCase();
+      case "nombre": return s.nombre.toLowerCase();
+      case "total": return s.total;
+      case "ml_full": return s.por_canal.ml_full ?? 0;
+      case "ml_flex": return s.por_canal.ml_flex ?? 0;
+      case "estado": return s.estado;
+      case "pub": return pub;
+      case "GEN": case "FLX": case "FULL": case "OFI": return s.por_deposito[sortKey] ?? 0;
+      default: return s.sku.toLowerCase();
+    }
+  }
+
   const filtrado = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return conReconc.filter(({ s, pub }) => {
+    const out = conReconc.filter(({ s, pub }) => {
       if (!verInactivos && !s.activo) return false;
       if (term && !`${s.sku} ${s.nombre}`.toLowerCase().includes(term)) return false;
       if (estado !== "todos" && s.estado !== estado) return false;
       if (deposito !== "todos" && (s.por_deposito[deposito] ?? 0) <= 0) return false;
+      if (pubFiltro !== "todos" && pub !== pubFiltro) return false;
       if (soloProblemas && !(pub === "sobreventa" || pub === "sin_publicar")) return false;
       return true;
     });
-  }, [conReconc, q, estado, deposito, verInactivos, soloProblemas]);
+    out.sort((a, b) => {
+      const va = valorOrden(a), vb = valorOrden(b);
+      if (va < vb) return -1 * sortDir;
+      if (va > vb) return 1 * sortDir;
+      return 0;
+    });
+    return out;
+  }, [conReconc, q, estado, deposito, pubFiltro, verInactivos, soloProblemas, sortKey, sortDir]);
 
   const activos = stock.filter((s) => s.activo);
   const totalUnidades = activos.reduce((a, s) => a + s.total, 0);
@@ -108,7 +139,14 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         </select>
         <select className="select" value={deposito} onChange={(e) => setDeposito(e.target.value)}>
           <option value="todos">Todos los depósitos</option>
-          {DEPS.map((d) => <option key={d} value={d}>{d}</option>)}
+          {DEPS.map((d) => <option key={d} value={d}>Con stock en {d}</option>)}
+        </select>
+        <select className="select" value={pubFiltro} onChange={(e) => setPubFiltro(e.target.value)}>
+          <option value="todos">Toda publicación</option>
+          <option value="sincronizado">✓ Sincronizado</option>
+          <option value="sobreventa">⚠ Sobreventa</option>
+          <option value="sin_publicar">○ Sin publicar</option>
+          <option value="na">Sin datos de ML</option>
         </select>
         <label className="chk"><input type="checkbox" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} /> Solo con problemas</label>
         <label className="chk"><input type="checkbox" checked={verInactivos} onChange={(e) => setVerInactivos(e.target.checked)} /> Ver inactivos</label>
@@ -125,12 +163,12 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
                 <th></th><th></th>
               </tr>
               <tr>
-                <th>Producto</th>
-                {DEPS.map((d) => <th key={d} style={{ textAlign: "right" }}>{d}</th>)}
-                <th style={{ textAlign: "right" }}>Total</th>
-                <th className="divl" style={{ textAlign: "right" }}>ML Full</th>
-                <th style={{ textAlign: "right" }}>Propio</th>
-                <th>Publicación</th>
+                <th className="sortable" onClick={() => ordenar("sku")}>Producto{flechita("sku")}</th>
+                {DEPS.map((d) => <th key={d} className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar(d)}>{d}{flechita(d)}</th>)}
+                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("total")}>Total{flechita("total")}</th>
+                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
+                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_flex")}>Propio{flechita("ml_flex")}</th>
+                <th className="sortable" onClick={() => ordenar("pub")}>Publicación{flechita("pub")}</th>
                 <th></th>
               </tr>
             </thead>

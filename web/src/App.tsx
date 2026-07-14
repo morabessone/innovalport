@@ -7,6 +7,7 @@ import { Movimiento } from "./views/Movimiento.tsx";
 import { Devoluciones } from "./views/Devoluciones.tsx";
 import { Inventario } from "./views/Inventario.tsx";
 import { Historial } from "./views/Historial.tsx";
+import { Login } from "./views/Login.tsx";
 
 type Tab = "panel" | "reponer" | "ingreso" | "movimiento" | "devoluciones" | "inventario" | "historial";
 type Theme = "auto" | "light" | "dark";
@@ -37,6 +38,7 @@ function applyTheme(t: Theme) {
 export function App() {
   const [tab, setTab] = useState<Tab>("panel");
   const [toast, setToast] = useState<string | null>(null);
+  const [authed, setAuthed] = useState<boolean>(() => localStorage.getItem("cs-auth") === "1");
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("cs-theme") as Theme) || "auto");
 
   useEffect(() => { applyTheme(theme); localStorage.setItem("cs-theme", theme); }, [theme]);
@@ -45,6 +47,10 @@ export function App() {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2600);
   }, []);
+
+  function logout() { localStorage.removeItem("cs-auth"); setAuthed(false); }
+
+  if (!authed) return <Login onOk={() => setAuthed(true)} />;
 
   return (
     <div className="app">
@@ -77,6 +83,7 @@ export function App() {
               {api.connected
                 ? <span className="conn live"><span className="dot" /> Conectado</span>
                 : <span className="conn demo"><span className="dot" /> Modo demo</span>}
+              <button className="theme-btn" onClick={logout} title="Cerrar sesión">Salir</button>
             </div>
           </div>
         </div>

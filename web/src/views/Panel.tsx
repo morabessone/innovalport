@@ -7,19 +7,24 @@ const ESTADO_LABEL: Record<string, string> = { ok: "OK", reponer: "reponer", sin
 
 // Reconciliación físico ↔ publicado.
 // Full: físico = publicado (ML administra). El pool compartido (total − Full)
-// respalda ML Flex + Tienda Nube + Web. Sobreventa si Flex publica más que eso.
-type Pub = "sincronizado" | "sobreventa" | "sin_publicar" | "na";
+// respalda ML Flex + Tienda Nube + Web, que se sincronizan por Flexit.
+// - sobreventa: algún canal compartido publica más que el pool compartido.
+// - desync: ML Flex y TN publican, pero con cantidades distintas (deberían espejar).
+type Pub = "sincronizado" | "sobreventa" | "desync" | "sin_publicar" | "na";
 function reconciliar(s: StockConsolidado): Pub {
   const pubFull = s.por_canal.ml_full ?? 0;
   const pubFlex = s.por_canal.ml_flex ?? 0;
+  const pubTN = s.por_canal.tn ?? 0;
   const compartido = Math.max(0, s.total - pubFull);
-  if (pubFull + pubFlex === 0) return s.total > 0 ? "sin_publicar" : "na";
-  if (pubFlex > compartido) return "sobreventa";
+  if (pubFull + pubFlex + pubTN === 0) return s.total > 0 ? "sin_publicar" : "na";
+  if (Math.max(pubFlex, pubTN) > compartido) return "sobreventa";
+  if (pubFlex > 0 && pubTN > 0 && pubFlex !== pubTN) return "desync";
   return "sincronizado";
 }
 const PUB_UI: Record<Pub, { label: string; cls: string }> = {
   sincronizado: { label: "✓ sincronizado", cls: "ok" },
   sobreventa: { label: "⚠ sobreventa", cls: "sin_stock" },
+  desync: { label: "≠ desincronizado", cls: "reponer" },
   sin_publicar: { label: "○ sin publicar", cls: "reponer" },
   na: { label: "—", cls: "neutral" },
 };
@@ -82,6 +87,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
       case "total": return s.total;
       case "ml_full": return s.por_canal.ml_full ?? 0;
       case "ml_flex": return s.por_canal.ml_flex ?? 0;
+      case "tn": return s.por_canal.tn ?? 0;
       case "estado": return s.estado;
       case "pub": return pub;
       case "GEN": case "FLX": case "FULL": case "OFI": return s.por_deposito[sortKey] ?? 0;
@@ -97,7 +103,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
       if (estado !== "todos" && s.estado !== estado) return false;
       if (deposito !== "todos" && (s.por_deposito[deposito] ?? 0) <= 0) return false;
       if (pubFiltro !== "todos" && pub !== pubFiltro) return false;
-      if (soloProblemas && !(pub === "sobreventa" || pub === "sin_publicar")) return false;
+      if (soloProblemas && !(pub === "sobreventa" || pub === "desync" || pub === "sin_publicar")) return false;
       return true;
     });
     out.sort((a, b) => {
@@ -112,6 +118,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
   const activos = stock.filter((s) => s.activo);
   const totalUnidades = activos.reduce((a, s) => a + s.total, 0);
   const sobreventa = conReconc.filter(({ s, pub }) => s.activo && pub === "sobreventa").length;
+  const desync = conReconc.filter(({ s, pub }) => s.activo && pub === "desync").length;
   const sinPublicar = conReconc.filter(({ s, pub }) => s.activo && pub === "sin_publicar").length;
 
   return (
@@ -128,6 +135,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         <div className="tile"><b className="tnum">{activos.length}</b><span>Productos activos</span></div>
         <div className="tile okv"><b className="tnum">{totalUnidades}</b><span>Unidades en stock</span></div>
         <div className={"tile" + (sobreventa ? " alert" : "")}><b className="tnum">{sobreventa}</b><span>Riesgo de sobreventa</span></div>
+        <div className={"tile" + (desync ? " warnv" : "")}><b className="tnum">{desync}</b><span>Flex ≠ Tienda Nube</span></div>
         <div className={"tile" + (sinPublicar ? " warnv" : "")}><b className="tnum">{sinPublicar}</b><span>Con stock sin publicar</span></div>
       </div>
 
@@ -145,8 +153,9 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
           <option value="todos">Toda publicación</option>
           <option value="sincronizado">✓ Sincronizado</option>
           <option value="sobreventa">⚠ Sobreventa</option>
+          <option value="desync">≠ Desincronizado</option>
           <option value="sin_publicar">○ Sin publicar</option>
-          <option value="na">Sin datos de ML</option>
+          <option value="na">Sin datos</option>
         </select>
         <label className="chk"><input type="checkbox" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} /> Solo con problemas</label>
         <label className="chk"><input type="checkbox" checked={verInactivos} onChange={(e) => setVerInactivos(e.target.checked)} /> Ver inactivos</label>
@@ -159,7 +168,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
               <tr className="grp">
                 <th></th>
                 <th className="gdep" colSpan={5}>Depósitos · físico</th>
-                <th className="gpub divl" colSpan={2}>Publicado</th>
+                <th className="gpub divl" colSpan={3}>Publicado</th>
                 <th></th><th></th>
               </tr>
               <tr>
@@ -167,14 +176,15 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
                 {DEPS.map((d) => <th key={d} className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar(d)}>{d}{flechita(d)}</th>)}
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("total")}>Total{flechita("total")}</th>
                 <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
-                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_flex")}>Propio{flechita("ml_flex")}</th>
+                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_flex")}>ML Flex{flechita("ml_flex")}</th>
+                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("tn")}>T. Nube{flechita("tn")}</th>
                 <th className="sortable" onClick={() => ordenar("pub")}>Publicación{flechita("pub")}</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={10} className="empty">Cargando…</td></tr>}
-              {!loading && filtrado.length === 0 && <tr><td colSpan={10} className="empty">Sin resultados.</td></tr>}
+              {loading && <tr><td colSpan={11} className="empty">Cargando…</td></tr>}
+              {!loading && filtrado.length === 0 && <tr><td colSpan={11} className="empty">Sin resultados.</td></tr>}
               {filtrado.map(({ s, pub }) => (
                 <tr key={s.producto_id} style={{ opacity: s.activo ? 1 : 0.55 }}>
                   <td className="sku">
@@ -189,6 +199,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
                   <td className="tnum mono" style={{ textAlign: "right", fontWeight: 700 }}>{s.total}</td>
                   <td className="tnum mono divl" style={{ textAlign: "right" }}>{s.por_canal.ml_full ?? 0}</td>
                   <td className="tnum mono" style={{ textAlign: "right" }}>{s.por_canal.ml_flex ?? 0}</td>
+                  <td className="tnum mono" style={{ textAlign: "right", color: s.por_canal.tn == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.tn ?? "—"}</td>
                   <td><span className={"badge " + PUB_UI[pub].cls}>{PUB_UI[pub].label}</span></td>
                   <td style={{ textAlign: "right" }}>
                     <button className="btn ghost btn-sm" disabled={trabajando === s.producto_id} onClick={() => toggleBaja(s)}>{s.activo ? "Baja" : "Reactivar"}</button>
@@ -200,8 +211,10 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         </div>
       </div>
       <p className="muted" style={{ fontSize: ".82rem" }}>
-        <b>ML Full</b>: publicado en Mercado Libre Full (= físico Full, lo administra ML). <b>Propio</b>: publicado en ML Flex,
-        que comparte pool con Tienda Nube y la Web. <b>⚠ Sobreventa</b> = Propio publica más que el stock compartido (total − Full).
+        <b>ML Full</b>: publicado en Mercado Libre Full (= físico Full, lo administra ML). <b>ML Flex</b> y <b>T. Nube</b>:
+        publicado en cada canal, que comparten el pool compartido (total − Full) junto con la Web.
+        <b> ⚠ Sobreventa</b> = un canal publica más que el pool compartido. <b>≠ Desincronizado</b> = ML Flex y Tienda Nube
+        publican cantidades distintas (deberían espejar). T. Nube proviene del export de publicaciones importado.
       </p>
     </div>
   );

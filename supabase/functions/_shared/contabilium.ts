@@ -135,34 +135,68 @@ export async function stockDeProducto(
 }
 
 // ---- Escritura (usada SOLO por contabilium-worker) -----------------------
+//
+// Cada escritura se arma primero como un "plan" (endpoint + método + payload)
+// para poder registrar EXACTAMENTE qué se enviaría sin enviarlo (modo dry-run).
+// El worker decide: en dry-run guarda el plan; en modo real lo ejecuta con
+// `ejecutarPlan`. Así "solo se toca Contabilium" cuando el dry-run está apagado.
+
+export interface PlanRequest {
+  endpoint: string;
+  method: string;
+  base: string;
+  body: Record<string, unknown>;
+  descripcion: string;
+}
 
 // Ajuste de stock en un depósito (delta puede ser + o -). [VERIFICAR]
-export async function ajustarStock(
+export function planAjustarStock(
   cbProductoId: string,
   cbDepositoId: string,
   delta: number,
   motivo: string,
-): Promise<unknown> {
-  return callJson(EP.ajusteStock, {
+): PlanRequest {
+  return {
+    base: BASE,
+    endpoint: EP.ajusteStock,
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      idProducto: cbProductoId,
-      idDeposito: cbDepositoId,
-      cantidad: delta,
-      motivo,
-    }),
-  });
+    body: { idProducto: cbProductoId, idDeposito: cbDepositoId, cantidad: delta, motivo },
+    descripcion: `Ajustar stock ${delta >= 0 ? "+" : ""}${delta} en depósito ${cbDepositoId} del producto ${cbProductoId}`,
+  };
+}
+
+// Alta/baja lógica de un producto en Contabilium. [VERIFICAR endpoint]
+export function planEstadoProducto(
+  cbProductoId: string | null,
+  sku: string | null,
+  activo: boolean,
+): PlanRequest {
+  return {
+    base: BASE,
+    endpoint: EP.productos, // [VERIFICAR] PUT sobre el concepto/producto
+    method: "PUT",
+    body: { id: cbProductoId, sku, activo },
+    descripcion: `${activo ? "Reactivar" : "Dar de baja"} el producto ${sku ?? cbProductoId ?? "(sin id CB)"}`,
+  };
 }
 
 // Nota de crédito rápida a partir de un comprobante existente. [VERIFICAR]
-export async function notaCreditoRapida(
-  cbComprobanteId: string,
-): Promise<{ id?: string }> {
-  return callJson(EP.ncRapida, {
+export function planNotaCredito(cbComprobanteId: string): PlanRequest {
+  return {
+    base: BASE,
+    endpoint: EP.ncRapida,
     method: "POST",
+    body: { idComprobante: cbComprobanteId },
+    descripcion: `Emitir nota de crédito del comprobante ${cbComprobanteId}`,
+  };
+}
+
+// Ejecuta REALMENTE un plan contra Contabilium. Solo se llama en modo real.
+export async function ejecutarPlan(plan: PlanRequest): Promise<unknown> {
+  return callJson(plan.endpoint, {
+    method: plan.method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idComprobante: cbComprobanteId }),
+    body: JSON.stringify(plan.body),
   });
 }
 

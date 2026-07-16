@@ -22,7 +22,7 @@ export function Inventario({ notify }: { notify: (m: string) => void }) {
   const filas = useMemo(() => {
     const t = q.trim().toLowerCase();
     return stock.filter((s) => {
-      if (!s.activo) return false;
+      if (!s.activo || s.tipo !== "P") return false;
       const sis = s.por_deposito[dep] ?? 0;
       if (soloConStock && sis <= 0) return false;
       if (t && !`${s.sku} ${s.nombre}`.toLowerCase().includes(t)) return false;

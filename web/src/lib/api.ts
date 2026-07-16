@@ -101,8 +101,12 @@ export const api = {
     return callFn("ocr-ingreso", { image_base64: imageB64, media_type: mediaType, proveedor, tipo });
   },
 
-  async confirmarIngreso(ingresoId: string, destino: string, items: { id?: string; producto_id: string; cantidad: number; aprender_alias?: string }[]) {
-    if (!connected) return demo.confirmarIngreso(destino, items);
+  async confirmarIngreso(ingresoId: string, destino: string, items: {
+    id?: string; producto_id?: string | null; cantidad: number; aprender_alias?: string;
+    nuevo?: { sku: string; nombre: string; costo?: number };
+    variante?: { sku: string; nombre: string; base_producto_id: string; costo?: number };
+  }[]) {
+    if (!connected) return demo.confirmarIngreso(destino, items.filter((i) => i.producto_id).map((i) => ({ id: i.id, producto_id: i.producto_id!, cantidad: i.cantidad })));
     await callFn("acciones", {
       accion: "confirmar_ingreso",
       payload: { ingreso_id: ingresoId, deposito_destino_id: destino, items },

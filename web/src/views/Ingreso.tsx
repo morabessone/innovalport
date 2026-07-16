@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { Deposito, IngresoItem, StockConsolidado } from "../lib/types.ts";
 
-interface Fila extends IngresoItem { confirmar: boolean; }
+type Modo = "existente" | "nuevo" | "variante";
+interface Fila extends IngresoItem {
+  confirmar: boolean;
+  modo: Modo;
+  nuevoSku: string;
+  nuevoNombre: string;
+  baseId: string | null;   // producto padre (variante)
+}
 
 export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [deps, setDeps] = useState<Deposito[]>([]);
@@ -14,8 +21,6 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [filas, setFilas] = useState<Fila[]>([]);
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [mprod, setMprod] = useState("");
-  const [mqty, setMqty] = useState(1);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -27,13 +32,28 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
     })();
   }, []);
 
+  const productosP = productos.filter((p) => p.tipo === "P");
+
+  function nuevaFila(base: Partial<Fila>): Fila {
+    return {
+      id: "man-" + Math.random().toString(36).slice(2, 8),
+      descripcion: "", sku_detectado: null, producto_id: null, cantidad: 1,
+      costo_unit: null, confianza: 1, confirmado: false,
+      confirmar: true, modo: "existente", nuevoSku: "", nuevoNombre: "", baseId: null,
+      ...base,
+    };
+  }
+
   async function onFile(f: File) {
     setReading(true);
     try {
       const b64 = await toBase64(f);
       const res = await api.ocrIngreso(b64, f.type || "image/jpeg", proveedor || undefined, tipo);
       setIngresoId(res.ingreso_id);
-      setFilas(res.items.map((i) => ({ ...i, confirmar: i.confianza >= 0.9 })));
+      setFilas(res.items.map((i) => nuevaFila({
+        ...i, confirmar: i.confianza >= 0.9, modo: "existente",
+        nuevoNombre: i.descripcion, nuevoSku: "",
+      })));
       notify(`Factura leída · ${res.items.length} renglón(es)`);
     } catch (e) {
       notify("No se pudo leer la factura: " + (e as Error).message);
@@ -45,39 +65,32 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   function setFila(id: string, patch: Partial<Fila>) {
     setFilas((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
   }
+  function quitar(id: string) { setFilas((fs) => fs.filter((f) => f.id !== id)); }
 
-  function agregarManual() {
-    if (!mprod) return notify("Elegí un producto");
-    const p = productos.find((x) => x.producto_id === mprod);
-    setFilas((fs) => [...fs, {
-      id: "man-" + Math.random().toString(36).slice(2, 8),
-      descripcion: p?.sku ?? "manual", sku_detectado: p?.sku ?? null,
-      producto_id: mprod, cantidad: Math.max(1, mqty), costo_unit: null,
-      confianza: 1, confirmado: true, confirmar: true,
-    }]);
-    setMqty(1);
-    notify(`${p?.sku} agregado`);
+  function filaLista(f: Fila): boolean {
+    if (!f.confirmar || f.cantidad <= 0) return false;
+    if (f.modo === "existente") return !!f.producto_id;
+    if (f.modo === "nuevo") return !!f.nuevoSku.trim();
+    return !!f.nuevoSku.trim() && !!f.baseId; // variante
   }
-
-  const listos = filas.filter((f) => f.confirmar && f.producto_id && f.cantidad > 0);
+  const listos = filas.filter(filaLista);
 
   async function confirmar() {
-    if (!listos.length) return notify("Marcá al menos un renglón con producto asignado");
+    if (!listos.length) return notify("Marcá al menos un renglón completo");
     setSaving(true);
     try {
-      await api.confirmarIngreso(
-        ingresoId ?? "manual", destino,
-        listos.map((f) => ({
-          id: f.id.startsWith("man-") ? undefined : f.id,
-          producto_id: f.producto_id!, cantidad: f.cantidad,
-          aprender_alias: f.confianza < 0.9 ? f.descripcion : undefined,
-        })),
-      );
+      await api.confirmarIngreso(ingresoId ?? "manual", destino, listos.map((f) => {
+        const base = { id: f.id.startsWith("man-") ? undefined : f.id, cantidad: f.cantidad };
+        if (f.modo === "existente") return { ...base, producto_id: f.producto_id!, aprender_alias: f.confianza < 0.9 ? f.descripcion : undefined };
+        if (f.modo === "nuevo") return { ...base, nuevo: { sku: f.nuevoSku.trim(), nombre: (f.nuevoNombre || f.descripcion || f.nuevoSku).trim() } };
+        return { ...base, variante: { sku: f.nuevoSku.trim(), nombre: (f.nuevoNombre || f.descripcion || f.nuevoSku).trim(), base_producto_id: f.baseId! } };
+      }));
       const total = listos.reduce((a, f) => a + f.cantidad, 0);
+      const nuevos = listos.filter((f) => f.modo !== "existente").length;
       setFilas([]); setIngresoId(null);
       if (fileRef.current) fileRef.current.value = "";
       const s = await api.stock(); setProductos(s);
-      notify(`Ingreso confirmado · ${total} u. dadas de alta`);
+      notify(`Ingreso confirmado · ${total} u.${nuevos ? ` · ${nuevos} producto(s) nuevo(s)` : ""}`);
     } catch (e) {
       notify("Error: " + (e as Error).message);
     } finally {
@@ -88,8 +101,8 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   return (
     <div className="stack">
       <div className="section-head">
-        <div><span className="eyebrow">Ingreso</span><h2>Cargar mercadería por foto</h2></div>
-        <span className="muted">Sacás una foto, el sistema la lee</span>
+        <div><span className="eyebrow">Ingreso</span><h2>Cargar mercadería</h2></div>
+        <span className="muted">Foto de factura/remito, o a mano</span>
       </div>
 
       <div className="card card-pad">
@@ -115,62 +128,74 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
 
         <input ref={fileRef} type="file" accept="image/*" hidden
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-        <button className="btn primary" onClick={() => fileRef.current?.click()} disabled={reading}>
-          {reading ? "Leyendo factura…" : "📷 Subir foto de factura / remito"}
-        </button>
-        {!api.connected && <span className="muted" style={{ marginLeft: 12 }}>(en demo, usa una factura de ejemplo)</span>}
-      </div>
-
-      <div className="card card-pad">
-        <h3 style={{ fontSize: "1rem", marginBottom: 10 }}>…o cargá a mano</h3>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div className="field grow" style={{ marginBottom: 0, minWidth: 180 }}>
-            <label>Producto</label>
-            <select className="select" value={mprod} onChange={(e) => setMprod(e.target.value)}>
-              <option value="">— elegí —</option>
-              {productos.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku} · {p.nombre}</option>)}
-            </select>
-          </div>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Cantidad</label>
-            <input className="input qtybox" type="number" min={1} value={mqty} onChange={(e) => setMqty(Math.max(1, Number(e.target.value) || 1))} />
-          </div>
-          <button className="btn" onClick={agregarManual}>＋ Agregar</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn primary" onClick={() => fileRef.current?.click()} disabled={reading}>
+            {reading ? "Leyendo factura…" : "📷 Subir foto de factura / remito"}
+          </button>
+          <button className="btn" onClick={() => setFilas((fs) => [...fs, nuevaFila({})])}>＋ Agregar renglón a mano</button>
         </div>
+        {!api.connected && <span className="muted" style={{ marginLeft: 4 }}>(en demo, usa una factura de ejemplo)</span>}
       </div>
 
       {filas.length > 0 && (
         <div className="card">
           <div className="card-pad" style={{ paddingBottom: 8 }}>
-            <h3 style={{ fontSize: "1rem" }}>Renglones detectados</h3>
-            <p className="muted">Revisá los que están en amarillo (baja confianza) y asigná el producto correcto.</p>
+            <h3 style={{ fontSize: "1rem" }}>Renglones</h3>
+            <p className="muted">Asigná cada renglón a un producto <b>existente</b>, o marcalo como <b>producto nuevo</b> o <b>variante</b>. La cantidad y el SKU siempre los podés corregir.</p>
           </div>
           <div className="scroll-x">
             <table className="tbl">
               <thead>
-                <tr><th></th><th>Detectado</th><th>Producto</th><th style={{ textAlign: "right" }}>Cant.</th><th>Confianza</th></tr>
+                <tr>
+                  <th></th><th>Detectado</th><th style={{ minWidth: 320 }}>Producto</th>
+                  <th style={{ textAlign: "right" }}>Cant.</th><th></th>
+                </tr>
               </thead>
               <tbody>
                 {filas.map((f) => (
-                  <tr key={f.id} style={{ background: f.confianza < 0.6 ? "var(--warn-wash)" : undefined }}>
+                  <tr key={f.id} style={{ background: f.confianza < 0.6 && f.modo === "existente" && !f.producto_id ? "var(--warn-wash)" : undefined }}>
+                    <td><input type="checkbox" checked={f.confirmar} onChange={(e) => setFila(f.id, { confirmar: e.target.checked })} /></td>
+                    <td style={{ fontSize: ".84rem", maxWidth: 200 }}>{f.descripcion || <span className="muted">(a mano)</span>}</td>
                     <td>
-                      <input type="checkbox" checked={f.confirmar}
-                        onChange={(e) => setFila(f.id, { confirmar: e.target.checked })} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <select className="select" style={{ width: 118, flex: "0 0 auto" }} value={f.modo}
+                            onChange={(e) => setFila(f.id, { modo: e.target.value as Modo })}>
+                            <option value="existente">Existente</option>
+                            <option value="nuevo">Nuevo</option>
+                            <option value="variante">Variante</option>
+                          </select>
+                          {f.modo === "existente" && (
+                            <select className="select grow" value={f.producto_id ?? ""}
+                              onChange={(e) => setFila(f.id, { producto_id: e.target.value || null })}>
+                              <option value="">— asignar SKU —</option>
+                              {productos.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku}{p.tipo !== "P" ? ` (${p.tipo})` : ""}</option>)}
+                            </select>
+                          )}
+                          {f.modo === "variante" && (
+                            <select className="select grow" value={f.baseId ?? ""}
+                              onChange={(e) => setFila(f.id, { baseId: e.target.value || null })}>
+                              <option value="">— producto base —</option>
+                              {productosP.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku}</option>)}
+                            </select>
+                          )}
+                        </div>
+                        {(f.modo === "nuevo" || f.modo === "variante") && (
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <input className="input" style={{ width: 150 }} placeholder="SKU nuevo" value={f.nuevoSku}
+                              onChange={(e) => setFila(f.id, { nuevoSku: e.target.value })} />
+                            <input className="input grow" placeholder="Nombre" value={f.nuevoNombre}
+                              onChange={(e) => setFila(f.id, { nuevoNombre: e.target.value })} />
+                          </div>
+                        )}
+                      </div>
                     </td>
-                    <td style={{ fontSize: ".86rem" }}>{f.descripcion}</td>
-                    <td>
-                      <select className="select" value={f.producto_id ?? ""}
-                        onChange={(e) => setFila(f.id, { producto_id: e.target.value || null })}>
-                        <option value="">— sin asignar —</option>
-                        {productos.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ textAlign: "right" }}>
+                    <td style={{ textAlign: "right", verticalAlign: "top" }}>
                       <input className="input qtybox" type="number" min={1} value={f.cantidad}
                         onChange={(e) => setFila(f.id, { cantidad: Math.max(1, Number(e.target.value) || 1) })} />
                     </td>
-                    <td>
-                      <div className="confbar"><i style={{ width: `${Math.round(f.confianza * 100)}%` }} /></div>
+                    <td style={{ verticalAlign: "top" }}>
+                      <button className="btn ghost btn-sm" onClick={() => quitar(f.id)} title="Quitar renglón">✕</button>
                     </td>
                   </tr>
                 ))}
@@ -178,13 +203,18 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
             </table>
           </div>
           <div className="card-pad between">
-            <span className="muted">{listos.length} renglón(es) listos para dar de alta</span>
+            <span className="muted">{listos.length} renglón(es) listos {listos.some((f) => f.modo !== "existente") && "· incluye altas nuevas"}</span>
             <button className="btn primary" onClick={confirmar} disabled={saving || !listos.length}>
               {saving ? "Confirmando…" : "Confirmar ingreso"}
             </button>
           </div>
         </div>
       )}
+
+      <p className="muted" style={{ fontSize: ".8rem" }}>
+        Los <b>productos nuevos</b> y <b>variantes</b> se crean en la app y quedan marcados como pendientes de
+        alta en Contabilium (se crean allá cuando activemos la escritura). El stock queda cargado igual.
+      </p>
     </div>
   );
 }

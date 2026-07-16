@@ -73,6 +73,7 @@ Deno.serve(async (req) => {
     // 2) multiget en lotes de 20 -> agregado por (producto, canal)
     const agg = new Map<string, { producto_id: string; canal: string; qty: number; ref: string }>();
     let matched = 0;
+    const sinProducto = new Set<string>(); // SKUs publicados que no existen en el catálogo
     for (let i = 0; i < ids.length; i += 20) {
       const lote = ids.slice(i, i + 20).join(",");
       const arr = await mlGet(`/items?ids=${lote}&attributes=id,status,available_quantity,seller_custom_field,seller_sku,attributes,shipping,variations`, token);
@@ -81,15 +82,18 @@ Deno.serve(async (req) => {
         if (!it || it.status !== "active") continue;
         const sku = skuDeItem(it).toLowerCase();
         const pid = bySku.get(sku);
-        if (!pid) continue;
+        if (!pid) { if (sku) sinProducto.add(sku); continue; }
         const canal = it?.shipping?.logistic_type === "fulfillment" ? "ml_full" : "ml_flex";
         let qty = Number(it.available_quantity ?? 0);
         if (Array.isArray(it.variations) && it.variations.length) {
           qty = it.variations.reduce((a: number, v: Record<string, any>) => a + Number(v.available_quantity ?? 0), 0);
         }
+        // Varias publicaciones del MISMO SKU comparten un único pool: ML muestra
+        // el mismo available_quantity en cada una. Por eso NO se suman entre sí,
+        // se toma el máximo (dedupe). Sumarlas multiplicaba el stock publicado.
         const key = pid + "|" + canal;
         const prev = agg.get(key);
-        if (prev) prev.qty += qty;
+        if (prev) { if (qty > prev.qty) { prev.qty = qty; prev.ref = it.id; } }
         else agg.set(key, { producto_id: pid, canal, qty, ref: it.id });
         matched++;
       }
@@ -117,8 +121,9 @@ Deno.serve(async (req) => {
       await d.from("stock").upsert({ producto_id: v.producto_id, deposito_id: depBy.OFI, cantidad: Math.max(0, total - v.qty - otros), updated_at: now }, { onConflict: "producto_id,deposito_id" });
     }
 
-    await d.from("canal_config").update({ meta: { ultima_sync: now, items: ids.length, publicaciones_matcheadas: matched } }).eq("tipo", "ml");
-    return json({ ok: true, items: ids.length, matcheadas: matched, filas: rows.length });
+    const sinProd = [...sinProducto];
+    await d.from("canal_config").update({ meta: { ultima_sync: now, items: ids.length, publicaciones_matcheadas: matched, sin_producto: sinProd } }).eq("tipo", "ml");
+    return json({ ok: true, items: ids.length, matcheadas: matched, filas: rows.length, sin_producto: sinProd });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }

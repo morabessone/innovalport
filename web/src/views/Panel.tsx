@@ -5,19 +5,21 @@ import type { StockConsolidado } from "../lib/types.ts";
 const DEPS = ["GEN", "FLX", "FULL", "OFI"];
 const ESTADO_LABEL: Record<string, string> = { ok: "OK", reponer: "reponer", sin_stock: "sin stock" };
 
-// Reconciliación físico ↔ publicado.
-// Full: físico = publicado (ML administra). El pool compartido (total − Full)
-// respalda ML Flex + Tienda Nube + Web, que se sincronizan por Flexit.
-// - sobreventa: algún canal compartido publica más que el pool compartido.
-// - desync: ML Flex y TN publican, pero con cantidades distintas (deberían espejar).
+// Reconciliación stock físico ↔ publicado.
+// Canales de venta: Mercado Libre y Tienda Nube.
+//  · ML Full: bodega de Mercado Libre (exclusivo ML, lo administra ML).
+//  · Flexit: pool físico compartido que abastece las publicaciones de ML Flex
+//    y de Tienda Nube. Al vender en cualquiera baja el mismo pool.
+// Riesgo de sobreventa: cuando ML Flex o Tienda Nube ofertan MÁS unidades que
+// las que hay físicamente en Flexit. Desync: ML Flex y TN publican distinto.
 type Pub = "sincronizado" | "sobreventa" | "desync" | "sin_publicar" | "na";
 function reconciliar(s: StockConsolidado): Pub {
-  const pubFull = s.por_canal.ml_full ?? 0;
+  const pool = s.por_canal.flexit ?? 0;   // Flexit = pool físico compartido
   const pubFlex = s.por_canal.ml_flex ?? 0;
   const pubTN = s.por_canal.tn ?? 0;
-  const compartido = Math.max(0, s.total - pubFull);
+  const pubFull = s.por_canal.ml_full ?? 0;
   if (pubFull + pubFlex + pubTN === 0) return s.total > 0 ? "sin_publicar" : "na";
-  if (Math.max(pubFlex, pubTN) > compartido) return "sobreventa";
+  if (pubFlex > pool || pubTN > pool) return "sobreventa";
   if (pubFlex > 0 && pubTN > 0 && pubFlex !== pubTN) return "desync";
   return "sincronizado";
 }
@@ -85,6 +87,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
       case "sku": return s.sku.toLowerCase();
       case "nombre": return s.nombre.toLowerCase();
       case "total": return s.total;
+      case "flexit": return s.por_canal.flexit ?? 0;
       case "ml_full": return s.por_canal.ml_full ?? 0;
       case "ml_flex": return s.por_canal.ml_flex ?? 0;
       case "tn": return s.por_canal.tn ?? 0;
@@ -168,14 +171,16 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
               <tr className="grp">
                 <th></th>
                 <th className="gdep" colSpan={5}>Depósitos · físico</th>
-                <th className="gpub divl" colSpan={3}>Publicado</th>
+                <th className="gpub divl" colSpan={1}>Pool</th>
+                <th className="gpub" colSpan={3}>Publicado por canal</th>
                 <th></th><th></th>
               </tr>
               <tr>
                 <th className="sortable" onClick={() => ordenar("sku")}>Producto{flechita("sku")}</th>
                 {DEPS.map((d) => <th key={d} className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar(d)}>{d}{flechita(d)}</th>)}
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("total")}>Total{flechita("total")}</th>
-                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
+                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("flexit")} title="Stock físico en Flexit: pool compartido de ML Flex + Tienda Nube">Flexit{flechita("flexit")}</th>
+                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_flex")}>ML Flex{flechita("ml_flex")}</th>
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("tn")}>T. Nube{flechita("tn")}</th>
                 <th className="sortable" onClick={() => ordenar("pub")}>Publicación{flechita("pub")}</th>
@@ -183,8 +188,8 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={11} className="empty">Cargando…</td></tr>}
-              {!loading && filtrado.length === 0 && <tr><td colSpan={11} className="empty">Sin resultados.</td></tr>}
+              {loading && <tr><td colSpan={12} className="empty">Cargando…</td></tr>}
+              {!loading && filtrado.length === 0 && <tr><td colSpan={12} className="empty">Sin resultados.</td></tr>}
               {filtrado.map(({ s, pub }) => (
                 <tr key={s.producto_id} style={{ opacity: s.activo ? 1 : 0.55 }}>
                   <td className="sku">
@@ -197,9 +202,10 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
                     <td key={d} className="tnum" style={{ textAlign: "right", color: (s.por_deposito[d] ?? 0) === 0 ? "var(--ink-faint)" : undefined }}>{s.por_deposito[d] ?? 0}</td>
                   ))}
                   <td className="tnum mono" style={{ textAlign: "right", fontWeight: 700 }}>{s.total}</td>
-                  <td className="tnum mono divl" style={{ textAlign: "right" }}>{s.por_canal.ml_full ?? 0}</td>
-                  <td className="tnum mono" style={{ textAlign: "right" }}>{s.por_canal.ml_flex ?? 0}</td>
-                  <td className="tnum mono" style={{ textAlign: "right", color: s.por_canal.tn == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.tn ?? "—"}</td>
+                  <td className="tnum mono divl" style={{ textAlign: "right", fontWeight: 700, color: s.por_canal.flexit == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.flexit ?? "—"}</td>
+                  <td className="tnum mono" style={{ textAlign: "right", color: s.por_canal.ml_full == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.ml_full ?? "—"}</td>
+                  <td className="tnum mono" style={{ textAlign: "right", color: (s.por_canal.ml_flex ?? 0) > (s.por_canal.flexit ?? 0) ? "var(--danger, #d64545)" : (s.por_canal.ml_flex == null ? "var(--ink-faint)" : undefined), fontWeight: (s.por_canal.ml_flex ?? 0) > (s.por_canal.flexit ?? 0) ? 700 : undefined }}>{s.por_canal.ml_flex ?? "—"}</td>
+                  <td className="tnum mono" style={{ textAlign: "right", color: (s.por_canal.tn ?? 0) > (s.por_canal.flexit ?? 0) ? "var(--danger, #d64545)" : (s.por_canal.tn == null ? "var(--ink-faint)" : undefined), fontWeight: (s.por_canal.tn ?? 0) > (s.por_canal.flexit ?? 0) ? 700 : undefined }}>{s.por_canal.tn ?? "—"}</td>
                   <td><span className={"badge " + PUB_UI[pub].cls}>{PUB_UI[pub].label}</span></td>
                   <td style={{ textAlign: "right" }}>
                     <button className="btn ghost btn-sm" disabled={trabajando === s.producto_id} onClick={() => toggleBaja(s)}>{s.activo ? "Baja" : "Reactivar"}</button>
@@ -211,10 +217,10 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         </div>
       </div>
       <p className="muted" style={{ fontSize: ".82rem" }}>
-        <b>ML Full</b>: publicado en Mercado Libre Full (= físico Full, lo administra ML). <b>ML Flex</b> y <b>T. Nube</b>:
-        publicado en cada canal, que comparten el pool compartido (total − Full) junto con la Web.
-        <b> ⚠ Sobreventa</b> = un canal publica más que el pool compartido. <b>≠ Desincronizado</b> = ML Flex y Tienda Nube
-        publican cantidades distintas (deberían espejar). T. Nube proviene del export de publicaciones importado.
+        <b>Flexit</b>: stock físico real en Flexit = pool compartido que abastece <b>ML Flex</b> y <b>Tienda Nube</b> (al
+        vender en cualquiera baja el mismo pool). <b>ML Full</b>: bodega de Mercado Libre, exclusivo de ML.
+        <b> ⚠ Sobreventa</b> = ML Flex o Tienda Nube ofertan más unidades que las que hay en Flexit (celda en rojo).
+        <b> ≠ Desincronizado</b> = ML Flex y Tienda Nube publican cantidades distintas del mismo pool.
       </p>
     </div>
   );

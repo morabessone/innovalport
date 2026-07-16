@@ -81,12 +81,47 @@ async function moverStock(db: DB, p: Record<string, unknown>, actor: string) {
 }
 
 // Ingreso: SUMA stock real -> cambia el total, se encola ajuste a Contabilium.
+// Resuelve el producto_id de un renglón: existente, nuevo o variante.
+// Crea el producto en la app (cb_pendiente=true) si es nuevo/variante.
+async function resolverProducto(db: DB, it: Record<string, any>, actor: string): Promise<string | null> {
+  if (it.producto_id) return String(it.producto_id);
+  const nuevo = it.nuevo || it.variante;
+  if (!nuevo) return null;
+  const esVariante = !!it.variante;
+  const sku = String(nuevo.sku ?? "").trim();
+  const nombre = String(nuevo.nombre ?? "").trim() || sku;
+  if (!sku) return null;
+  const { data: ya } = await db.from("productos").select("id").ilike("sku", sku).maybeSingle();
+  if (ya?.id) return String(ya.id);
+  let baseSku: string | null = null;
+  if (esVariante && nuevo.base_producto_id) {
+    const { data: padre } = await db.from("productos").select("sku").eq("id", String(nuevo.base_producto_id)).maybeSingle();
+    baseSku = padre?.sku ?? null;
+  }
+  const { data: creado, error } = await db.from("productos").insert({
+    sku, nombre, tipo: esVariante ? "V" : "P", activo: true,
+    costo: Number(nuevo.costo ?? 0) || 0, base_sku: baseSku, cb_pendiente: true,
+  }).select("id").single();
+  if (error) throw new Error(`No se pudo crear ${sku}: ${error.message}`);
+  await audit(db, "producto", creado.id, esVariante ? "alta_variante" : "alta_nuevo", { sku, nombre, base_sku: baseSku }, actor);
+  return String(creado.id);
+}
+
 async function confirmarIngreso(db: DB, p: Record<string, unknown>, actor: string) {
   const ingresoId = String(p.ingreso_id);
   const destino = String(p.deposito_destino_id);
-  const items = (p.items ?? []) as { id?: string; producto_id: string; cantidad: number; aprender_alias?: string }[];
-  const confirmados = items.filter((i) => i.producto_id && i.cantidad > 0);
-  if (!confirmados.length) throw new Error("no hay renglones confirmados con producto");
+  const items = (p.items ?? []) as Record<string, any>[];
+  const confirmados: { producto_id: string; cantidad: number; id?: string; aprender_alias?: string }[] = [];
+  let creados = 0;
+  for (const it of items) {
+    if (!(Number(it.cantidad) > 0)) continue;
+    const nuevoFlag = !it.producto_id && (it.nuevo || it.variante);
+    const pid = await resolverProducto(db, it, actor);
+    if (!pid) continue;
+    if (nuevoFlag) creados++;
+    confirmados.push({ producto_id: pid, cantidad: Number(it.cantidad), id: it.id, aprender_alias: it.aprender_alias });
+  }
+  if (!confirmados.length) throw new Error("no hay renglones con producto asignado");
   for (const it of confirmados) {
     await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: destino, p_delta: it.cantidad });
     await enqueueAjuste(db, it.producto_id, destino, it.cantidad, "Ingreso por factura");
@@ -99,8 +134,8 @@ async function confirmarIngreso(db: DB, p: Record<string, unknown>, actor: strin
     await db.from("ingresos").update({ estado: "confirmado", deposito_destino_id: destino, confirmado_at: new Date().toISOString() }).eq("id", ingresoId);
   }
   const remito = await crearRemito(db, "ingreso", null, destino, confirmados.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })), actor, ingresoId && ingresoId !== "manual" ? { tabla: "ingresos", id: ingresoId } : undefined);
-  await audit(db, "ingreso", remito.id, "confirmado", { destino, items: confirmados }, actor);
-  return { ok: true, remito, alta: confirmados.length };
+  await audit(db, "ingreso", remito.id, "confirmado", { destino, items: confirmados, creados }, actor);
+  return { ok: true, remito, alta: confirmados.length, productos_nuevos: creados };
 }
 
 async function cargarDevolucion(db: DB, p: Record<string, unknown>, actor: string) {

@@ -63,12 +63,27 @@ Un mismo SKU/producto puede tener **varias publicaciones** en Mercado Libre:
 2. `GET /items?ids=...&attributes=id,status,seller_custom_field,seller_sku,attributes,user_product_id,variations,catalog_listing`
 3. Por cada `user_product_id` único: `GET /user-products/{id}/stock` → `selling_address` (Flex) + `meli_facility` (Full).
 
-### 3.2 Contabilium
+### 3.2 Contabilium (probado en vivo contra la API real)
 
-- El export **sí da stock por depósito** (Genpol, Full, Flexit, Oficina, +WIGOU/PROVEEDORES a descartar). 140 SKUs, tipos `P` (producto), `V` (variante), `C` (combo).
-- **Las columnas Full y Flexit de Contabilium derivan a negativo** (p.ej. BABY-CALL Full −134, KITHERRAMIENTASBICI Full −296, PROYECTOR Full −135). Las ventas se descuentan pero las reposiciones/colectas no siempre se registran. **Conclusión: Contabilium es la verdad para Genpol y Oficina; para Full y Flexit la verdad son ML (`meli_facility`) y el pool real de Flexit.**
-- **Combos (tipo C)** traen su composición: `SKU combo → SKU base × Cantidad`.
-  Ej.: `COMBO-BABYCALL-2 → 2× BABY-CALL-PORT`, `COMBO-DOMO-3 → 3× CAM-GR-JORTAN-FULL-C`, `COMBO-REFLECTOR200W-2 → 2× REFLEC-200W-PORT`.
+Base: `https://rest.contabilium.com` · Auth: `POST /token` (client_credentials, client_id = email, client_secret = API key).
+
+**Lo que la API SÍ da:**
+- **Producto / maestro**: `GET /api/conceptos/search?filtro=SKU` y `GET /api/conceptos/{id}` → SKU (`Codigo`), `Stock` (TOTAL), `StockMinimo`, `CostoInterno`, `Tipo`, `Estado`, `SincronizaStock`.
+- **Feed de ventas UNIFICADO (ML + TN)**: `GET /api/comprobantes/search?fechaDesde=YYYY-MM-DD&fechaHasta=YYYY-MM-DD` (lista) y `GET /api/comprobantes/{id}` (detalle). Cada comprobante trae:
+  - `Origen`: **"MercadoLibre" / "TiendaNube"** ← el canal.
+  - `IDVentaIntegracion`: id de la orden en el canal. `IDIntegracion`.
+  - `Inventario`: **id del depósito** de donde salió (permite saber si fue Full o Flexit).
+  - `Items[]`: `Codigo` (SKU), `Cantidad`, `Concepto`, precios, `Tipo`.
+  - `TipoFc` (FCB/FCA), `FechaEmision`, `RazonSocial`, importes, `Cae`.
+  - **Esto es la señal para cerrar el loop**: Contabilium ya ingesta las ventas de ML y TN. En vez de cablear webhooks de cada canal por separado, se puede pollear este feed y ver todas las ventas con su canal y depósito.
+
+**Lo que la API NO da:**
+- **Stock por depósito**: los endpoints de conceptos devuelven solo `Stock` TOTAL. No hay endpoint de stock por depósito. El desglose por depósito (Genpol/Full/Flexit/Oficina) **sólo sale del export/reporte** (140 SKUs, tipos `P`/`V`/`C`).
+- Escritura de stock: los POST probados antes fueron rechazados (formato `Tipo`); queda por validar con la colección Postman oficial.
+
+**Del export (no de la API):**
+- Stock por depósito. **Las columnas Full y Flexit derivan a negativo** (p.ej. BABY-CALL Full −134, KITHERRAMIENTASBICI Full −296): ventas se descuentan pero reposiciones/colectas no siempre. Verdad: Genpol/Oficina en Contabilium; Full/Flex en ML.
+- **Combos (tipo C)** con su composición `SKU combo → SKU base × Cantidad` (ej. `COMBO-BABYCALL-2 → 2× BABY-CALL-PORT`, `COMBO-DOMO-3 → 3× CAM-GR-JORTAN-FULL-C`).
 
 ### 3.3 Flexit
 
@@ -124,23 +139,55 @@ Por cada SKU base:
 3. **Flexit / TN**: por export por ahora (control cruzado / conciliación).
 4. **Reconciliar**: calcular sobreventa/reposición y mostrar en el Panel.
 
-## 6. Cerrar el loop (write-back) — objetivo final
+## 6. Estrategia: Contabilium como centro (decisión del equipo)
 
-- Venta en **Tienda Nube** → hay que **bajar el stock en Contabilium** para que ML
-  Flex también baje (evita sobreventa). Con la API de ML se puede además
-  decrementar directamente el `selling_address` del user_product
-  (`PUT /user-products/{id}/stock`), como refuerzo inmediato.
-- El write-back a Contabilium sigue en **dry-run** hasta validar los endpoints de escritura.
-- Requiere señal de venta: **webhooks/notificaciones** de ML y TN, o polling de `sold_quantity`.
+> "Si podés usar todo a través de Contabilium —que justamente provee la
+> integración entre ML y TN, manejo de depósitos, remitos, facturación— mejor.
+> Esta app es la versión simple para manejar estas cosas, manteniendo todo en
+> Contabilium e integrando lo necesario."
 
-## 7. Preguntas abiertas / lo que hace falta validar
+La app **no reimplementa** la integración: se apoya en Contabilium como sistema
+de registro y agrega la capa que hoy falta (visibilidad por canal, alerta de
+sobreventa, alerta de reponer Full). Reparto de responsabilidades:
 
-1. **Combos en ML:** ¿el stock del combo está linkeado al base (ML lo descuenta
-   solo) o son independientes? Hay que probar con un combo real publicado.
-2. **TN:** ¿hay algún webhook/notificación de ventas o de stock, aunque sea básico?
-   Para no depender de exports.
-3. **available vs split:** confirmar que `selling_address + meli_facility ≈
-   available_quantity` de la publicación (en un caso dio 137 vs 125, por ventas
-   entre el export y la consulta — normal, pero conviene medir el desfase).
-4. **Colectas a Full:** confirmar que el reabastecimiento Genpol→Full es manual y
-   cuándo conviene alertar reposición.
+| Dato / acción | Fuente / destino |
+|---|---|
+| Maestro de productos, costo, stock TOTAL, mínimos | Contabilium API (`/api/conceptos`) |
+| **Ventas por canal** (ML + TN), depósito, SKU, cantidad | Contabilium API (`/api/comprobantes`) — **feed unificado** |
+| Stock por depósito (Genpol/Full/Flexit/Oficina) | Export de Contabilium (no hay API) + se deriva de las ventas |
+| Split Full vs Flex por publicación | ML API (`/user-products/{id}/stock`) |
+| Combos (pack × N) | Export de combos de Contabilium |
+| Remitos / facturación / colectas | Se hacen en Contabilium (la app solo muestra/alerta) |
+
+**Cerrar el loop (evitar sobreventa TN↔ML):**
+- Contabilium ya recibe las ventas de ambos canales y descuenta el stock TOTAL.
+  El problema real es el **desfase por depósito/pool** y el **timing**.
+- La app **polea `/api/comprobantes`** (cada pocos minutos) → detecta ventas
+  nuevas por `Origen` y `Inventario` → recalcula el pool de Flexit y **alerta**
+  si un canal quedó ofertando de más.
+- Refuerzo opcional inmediato: ante una venta, decrementar el `selling_address`
+  del user_product en ML (`PUT /user-products/{id}/stock`) para que ML Flex baje
+  al toque. El write-back a Contabilium se mantiene en **dry-run** hasta validar.
+- **Tienda Nube** además ofrece webhooks `order/created` y `order/paid`
+  (docs.tiendanube.com) como señal inmediata, complementaria al feed de Contabilium.
+
+## 7. Reposición de Full
+
+- Full se abastece con **colectas manuales Genpol→Full** (las programa el equipo,
+  las retira ML de Genpol).
+- La app **solo muestra un cartel "hay que reponer Full"** cuando el stock de Full
+  (`meli_facility`) baja de un umbral y hay stock en Genpol. No automatiza nada.
+
+## 8. Preguntas abiertas / lo que falta validar
+
+1. **Combos en ML:** ¿ML descuenta solo el stock del base al vender un combo, o
+   son stocks independientes? (a investigar; el equipo no lo tiene claro). Afecta
+   cómo se calcula el disponible con packs.
+2. **available vs split:** medir el desfase entre `selling_address + meli_facility`
+   y `available_quantity` (un caso dio 137 vs 125, por ventas entre export y
+   consulta — normal, pero conviene monitorearlo).
+3. **Escritura en Contabilium:** validar el endpoint de ajuste de stock con la
+   colección Postman oficial (hoy en dry-run).
+4. **Stock por depósito sin export:** evaluar reconstruirlo con export baseline +
+   movimientos derivados del feed de comprobantes (`Inventario` por venta), para
+   no depender de subir el export a mano.

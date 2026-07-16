@@ -11,10 +11,12 @@ export interface StockConsolidado {
   producto_id: string;
   sku: string;
   nombre: string;
+  tipo: string;         // P producto | V variante | C combo
+  costo: number;
   stock_minimo: number;
   total: number;
-  por_deposito: Record<string, number>;
-  por_canal: Record<string, number>;   // ml_full, ml_flex
+  por_deposito: Record<string, number>;  // GEN, FULL, FLX, OFI
+  por_canal: Record<string, number>;      // ml_full, ml_flex, tn
   estado: EstadoStock;
   activo: boolean;
 }

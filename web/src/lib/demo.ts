@@ -60,6 +60,7 @@ export const demo = {
       const pubFlex = Math.min(p.por.FLX ?? 0, 6); // demo: algo publicado en Flex
       return {
         producto_id: p.producto_id, sku: p.sku, nombre: p.nombre,
+        tipo: "P", costo: 0,
         stock_minimo: p.stock_minimo, por_deposito: { ...p.por }, total,
         por_canal: { ml_full: pubFull, ml_flex: pubFlex },
         estado: estadoDe(total, p.stock_minimo),

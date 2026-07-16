@@ -56,6 +56,7 @@ export const api = {
       const min = Number(r.stock_minimo ?? 0);
       return {
         producto_id: r.producto_id, sku: r.sku, nombre: r.nombre,
+        tipo: String(r.tipo ?? "P"), costo: Number(r.costo ?? 0),
         stock_minimo: min, total,
         por_deposito: (r.por_deposito ?? {}) as Record<string, number>,
         por_canal: (r.por_canal ?? {}) as Record<string, number>,
@@ -127,6 +128,12 @@ export const api = {
   async bajaProducto(producto_id: string, activo: boolean) {
     if (!connected) return demo.bajaProducto(producto_id, activo);
     await callFn("acciones", { accion: "baja_producto", payload: { producto_id, activo } });
+  },
+
+  // Setea el stock mínimo del producto (dispara la alerta de reposición).
+  async setMinimo(producto_id: string, stock_minimo: number) {
+    if (!connected) return;
+    await callFn("producto-config", { producto_id, stock_minimo });
   },
 
   async recibirDevolucion(devolucion_id: string) {

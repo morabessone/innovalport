@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { StockConsolidado } from "../lib/types.ts";
+import { ProductoDetalle } from "./ProductoDetalle.tsx";
 
-const DEPS = ["GEN", "FLX", "FULL", "OFI"];
+// Depósitos físicos (Contabilium): Genpol, Full, Flexit, Oficina.
+const DEPS: { code: string; label: string }[] = [
+  { code: "GEN", label: "Genpol" },
+  { code: "FULL", label: "Full" },
+  { code: "FLX", label: "Flexit" },
+  { code: "OFI", label: "Oficina" },
+];
 const ESTADO_LABEL: Record<string, string> = { ok: "OK", reponer: "reponer", sin_stock: "sin stock" };
+const TIPO_LABEL: Record<string, string> = { C: "combo", V: "variante" };
 
-// Reconciliación stock físico ↔ publicado.
-// Canales de venta: Mercado Libre y Tienda Nube.
-//  · ML Full: bodega de Mercado Libre (exclusivo ML, lo administra ML).
-//  · Flexit: pool físico compartido que abastece las publicaciones de ML Flex
-//    y de Tienda Nube. Al vender en cualquiera baja el mismo pool.
-// Riesgo de sobreventa: cuando ML Flex o Tienda Nube ofertan MÁS unidades que
-// las que hay físicamente en Flexit. Desync: ML Flex y TN publican distinto.
+// Reconciliación físico ↔ publicado.
+//  · Full: bodega de Mercado Libre (exclusivo ML). Físico = publicado.
+//  · Flexit: pool físico compartido que abastece ML Flex y Tienda Nube.
+// Sobreventa: ML Flex o Tienda Nube ofertan más que el físico en Flexit.
 type Pub = "sincronizado" | "sobreventa" | "desync" | "sin_publicar" | "na";
 function reconciliar(s: StockConsolidado): Pub {
-  const pool = s.por_canal.flexit ?? 0;   // Flexit = pool físico compartido
+  const pool = s.por_deposito.FLX ?? 0;   // Flexit físico
   const pubFlex = s.por_canal.ml_flex ?? 0;
   const pubTN = s.por_canal.tn ?? 0;
   const pubFull = s.por_canal.ml_full ?? 0;
@@ -36,14 +41,15 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [sel, setSel] = useState<StockConsolidado | null>(null);
 
   const [q, setQ] = useState("");
   const [estado, setEstado] = useState("todos");
   const [deposito, setDeposito] = useState("todos");
   const [pubFiltro, setPubFiltro] = useState("todos");
   const [verInactivos, setVerInactivos] = useState(false);
+  const [verCombos, setVerCombos] = useState(false);
   const [soloProblemas, setSoloProblemas] = useState(false);
-  const [trabajando, setTrabajando] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<string>("sku");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
 
@@ -72,22 +78,12 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
     } finally { setSyncing(false); }
   }
 
-  async function toggleBaja(p: StockConsolidado) {
-    const dar = p.activo;
-    if (dar && !confirm(`¿Dar de baja "${p.sku}"?`)) return;
-    setTrabajando(p.producto_id);
-    try { await api.bajaProducto(p.producto_id, !dar); await load(); notify(dar ? `${p.sku} dado de baja` : `${p.sku} reactivado`); }
-    catch (e) { notify("Error: " + (e as Error).message); } finally { setTrabajando(null); }
-  }
-
   const conReconc = useMemo(() => stock.map((s) => ({ s, pub: reconciliar(s) })), [stock]);
 
   function valorOrden({ s, pub }: { s: StockConsolidado; pub: Pub }): string | number {
     switch (sortKey) {
       case "sku": return s.sku.toLowerCase();
-      case "nombre": return s.nombre.toLowerCase();
       case "total": return s.total;
-      case "flexit": return s.por_canal.flexit ?? 0;
       case "ml_full": return s.por_canal.ml_full ?? 0;
       case "ml_flex": return s.por_canal.ml_flex ?? 0;
       case "tn": return s.por_canal.tn ?? 0;
@@ -101,6 +97,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
   const filtrado = useMemo(() => {
     const term = q.trim().toLowerCase();
     const out = conReconc.filter(({ s, pub }) => {
+      if (!verCombos && s.tipo !== "P") return false;
       if (!verInactivos && !s.activo) return false;
       if (term && !`${s.sku} ${s.nombre}`.toLowerCase().includes(term)) return false;
       if (estado !== "todos" && s.estado !== estado) return false;
@@ -116,13 +113,12 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
       return 0;
     });
     return out;
-  }, [conReconc, q, estado, deposito, pubFiltro, verInactivos, soloProblemas, sortKey, sortDir]);
+  }, [conReconc, q, estado, deposito, pubFiltro, verInactivos, verCombos, soloProblemas, sortKey, sortDir]);
 
-  const activos = stock.filter((s) => s.activo);
-  const totalUnidades = activos.reduce((a, s) => a + s.total, 0);
-  const sobreventa = conReconc.filter(({ s, pub }) => s.activo && pub === "sobreventa").length;
-  const desync = conReconc.filter(({ s, pub }) => s.activo && pub === "desync").length;
-  const sinPublicar = conReconc.filter(({ s, pub }) => s.activo && pub === "sin_publicar").length;
+  const base = stock.filter((s) => s.tipo === "P" && s.activo);
+  const totalUnidades = base.reduce((a, s) => a + Math.max(0, s.total), 0);
+  const sobreventa = conReconc.filter(({ s, pub }) => s.activo && s.tipo === "P" && pub === "sobreventa").length;
+  const porReponer = base.filter((s) => s.estado === "reponer" || s.estado === "sin_stock").length;
 
   return (
     <div className="stack">
@@ -135,11 +131,10 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
       </div>
 
       <div className="tiles">
-        <div className="tile"><b className="tnum">{activos.length}</b><span>Productos activos</span></div>
+        <div className="tile"><b className="tnum">{base.length}</b><span>Productos activos</span></div>
         <div className="tile okv"><b className="tnum">{totalUnidades}</b><span>Unidades en stock</span></div>
         <div className={"tile" + (sobreventa ? " alert" : "")}><b className="tnum">{sobreventa}</b><span>Riesgo de sobreventa</span></div>
-        <div className={"tile" + (desync ? " warnv" : "")}><b className="tnum">{desync}</b><span>Flex ≠ Tienda Nube</span></div>
-        <div className={"tile" + (sinPublicar ? " warnv" : "")}><b className="tnum">{sinPublicar}</b><span>Con stock sin publicar</span></div>
+        <div className={"tile" + (porReponer ? " warnv" : "")}><b className="tnum">{porReponer}</b><span>Por reponer</span></div>
       </div>
 
       <div className="filters">
@@ -150,7 +145,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         </select>
         <select className="select" value={deposito} onChange={(e) => setDeposito(e.target.value)}>
           <option value="todos">Todos los depósitos</option>
-          {DEPS.map((d) => <option key={d} value={d}>Con stock en {d}</option>)}
+          {DEPS.map((d) => <option key={d.code} value={d.code}>Con stock en {d.label}</option>)}
         </select>
         <select className="select" value={pubFiltro} onChange={(e) => setPubFiltro(e.target.value)}>
           <option value="todos">Toda publicación</option>
@@ -161,6 +156,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
           <option value="na">Sin datos</option>
         </select>
         <label className="chk"><input type="checkbox" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} /> Solo con problemas</label>
+        <label className="chk"><input type="checkbox" checked={verCombos} onChange={(e) => setVerCombos(e.target.checked)} /> Ver combos/variantes</label>
         <label className="chk"><input type="checkbox" checked={verInactivos} onChange={(e) => setVerInactivos(e.target.checked)} /> Ver inactivos</label>
       </div>
 
@@ -171,57 +167,63 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
               <tr className="grp">
                 <th></th>
                 <th className="gdep" colSpan={5}>Depósitos · físico</th>
-                <th className="gpub divl" colSpan={1}>Pool</th>
-                <th className="gpub" colSpan={3}>Publicado por canal</th>
-                <th></th><th></th>
+                <th className="gpub divl" colSpan={3}>Publicado por canal</th>
+                <th></th>
               </tr>
               <tr>
                 <th className="sortable" onClick={() => ordenar("sku")}>Producto{flechita("sku")}</th>
-                {DEPS.map((d) => <th key={d} className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar(d)}>{d}{flechita(d)}</th>)}
+                {DEPS.map((d) => <th key={d.code} className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar(d.code)}>{d.label}{flechita(d.code)}</th>)}
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("total")}>Total{flechita("total")}</th>
-                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("flexit")} title="Stock físico en Flexit: pool compartido de ML Flex + Tienda Nube">Flexit{flechita("flexit")}</th>
-                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
+                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("ml_flex")}>ML Flex{flechita("ml_flex")}</th>
                 <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("tn")}>T. Nube{flechita("tn")}</th>
                 <th className="sortable" onClick={() => ordenar("pub")}>Publicación{flechita("pub")}</th>
-                <th></th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={12} className="empty">Cargando…</td></tr>}
-              {!loading && filtrado.length === 0 && <tr><td colSpan={12} className="empty">Sin resultados.</td></tr>}
-              {filtrado.map(({ s, pub }) => (
-                <tr key={s.producto_id} style={{ opacity: s.activo ? 1 : 0.55 }}>
-                  <td className="sku">
-                    {s.sku}
-                    {!s.activo && <span className="badge neutral" style={{ marginLeft: 8 }}>baja</span>}
-                    {s.estado !== "ok" && <span className={"badge " + s.estado} style={{ marginLeft: 8 }}>{ESTADO_LABEL[s.estado]}</span>}
-                    <small>{s.nombre}</small>
-                  </td>
-                  {DEPS.map((d) => (
-                    <td key={d} className="tnum" style={{ textAlign: "right", color: (s.por_deposito[d] ?? 0) === 0 ? "var(--ink-faint)" : undefined }}>{s.por_deposito[d] ?? 0}</td>
-                  ))}
-                  <td className="tnum mono" style={{ textAlign: "right", fontWeight: 700 }}>{s.total}</td>
-                  <td className="tnum mono divl" style={{ textAlign: "right", fontWeight: 700, color: s.por_canal.flexit == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.flexit ?? "—"}</td>
-                  <td className="tnum mono" style={{ textAlign: "right", color: s.por_canal.ml_full == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.ml_full ?? "—"}</td>
-                  <td className="tnum mono" style={{ textAlign: "right", color: (s.por_canal.ml_flex ?? 0) > (s.por_canal.flexit ?? 0) ? "var(--danger, #d64545)" : (s.por_canal.ml_flex == null ? "var(--ink-faint)" : undefined), fontWeight: (s.por_canal.ml_flex ?? 0) > (s.por_canal.flexit ?? 0) ? 700 : undefined }}>{s.por_canal.ml_flex ?? "—"}</td>
-                  <td className="tnum mono" style={{ textAlign: "right", color: (s.por_canal.tn ?? 0) > (s.por_canal.flexit ?? 0) ? "var(--danger, #d64545)" : (s.por_canal.tn == null ? "var(--ink-faint)" : undefined), fontWeight: (s.por_canal.tn ?? 0) > (s.por_canal.flexit ?? 0) ? 700 : undefined }}>{s.por_canal.tn ?? "—"}</td>
-                  <td><span className={"badge " + PUB_UI[pub].cls}>{PUB_UI[pub].label}</span></td>
-                  <td style={{ textAlign: "right" }}>
-                    <button className="btn ghost btn-sm" disabled={trabajando === s.producto_id} onClick={() => toggleBaja(s)}>{s.activo ? "Baja" : "Reactivar"}</button>
-                  </td>
-                </tr>
-              ))}
+              {loading && <tr><td colSpan={10} className="empty">Cargando…</td></tr>}
+              {!loading && filtrado.length === 0 && <tr><td colSpan={10} className="empty">Sin resultados.</td></tr>}
+              {filtrado.map(({ s, pub }) => {
+                const pool = s.por_deposito.FLX ?? 0;
+                return (
+                  <tr key={s.producto_id} className="rowlink" style={{ opacity: s.activo ? 1 : 0.55 }} onClick={() => setSel(s)}>
+                    <td className="sku">
+                      {s.sku}
+                      {s.tipo !== "P" && <span className="badge neutral" style={{ marginLeft: 8 }}>{TIPO_LABEL[s.tipo]}</span>}
+                      {!s.activo && <span className="badge neutral" style={{ marginLeft: 8 }}>baja</span>}
+                      {s.estado !== "ok" && <span className={"badge " + s.estado} style={{ marginLeft: 8 }}>{ESTADO_LABEL[s.estado]}</span>}
+                      <small>{s.nombre}</small>
+                    </td>
+                    {DEPS.map((d) => {
+                      const v = s.por_deposito[d.code] ?? 0;
+                      return <td key={d.code} className="tnum" style={{ textAlign: "right", color: v < 0 ? "var(--danger, #d64545)" : v === 0 ? "var(--ink-faint)" : undefined }}>{v}</td>;
+                    })}
+                    <td className="tnum mono" style={{ textAlign: "right", fontWeight: 700 }}>{s.total}</td>
+                    <td className="tnum mono divl" style={{ textAlign: "right", color: s.por_canal.ml_full == null ? "var(--ink-faint)" : undefined }}>{s.por_canal.ml_full ?? "—"}</td>
+                    <td className="tnum mono" style={{ textAlign: "right", color: (s.por_canal.ml_flex ?? 0) > pool ? "var(--danger, #d64545)" : (s.por_canal.ml_flex == null ? "var(--ink-faint)" : undefined), fontWeight: (s.por_canal.ml_flex ?? 0) > pool ? 700 : undefined }}>{s.por_canal.ml_flex ?? "—"}</td>
+                    <td className="tnum mono" style={{ textAlign: "right", color: (s.por_canal.tn ?? 0) > pool ? "var(--danger, #d64545)" : (s.por_canal.tn == null ? "var(--ink-faint)" : undefined), fontWeight: (s.por_canal.tn ?? 0) > pool ? 700 : undefined }}>{s.por_canal.tn ?? "—"}</td>
+                    <td><span className={"badge " + PUB_UI[pub].cls}>{PUB_UI[pub].label}</span></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
       <p className="muted" style={{ fontSize: ".82rem" }}>
-        <b>Flexit</b>: stock físico real en Flexit = pool compartido que abastece <b>ML Flex</b> y <b>Tienda Nube</b> (al
-        vender en cualquiera baja el mismo pool). <b>ML Full</b>: bodega de Mercado Libre, exclusivo de ML.
-        <b> ⚠ Sobreventa</b> = ML Flex o Tienda Nube ofertan más unidades que las que hay en Flexit (celda en rojo).
-        <b> ≠ Desincronizado</b> = ML Flex y Tienda Nube publican cantidades distintas del mismo pool.
+        <b>Depósitos:</b> Genpol (bulk) · Full (bodega ML) · Flexit (pool físico de ML Flex + Tienda Nube) · Oficina.
+        <b> ML Flex</b> y <b>T. Nube</b> se abastecen de Flexit. <b>⚠ Sobreventa</b> = un canal oferta más que el físico en
+        Flexit (celda en rojo). Clic en un producto para ver el detalle y setear su mínimo.
       </p>
+
+      {sel && (
+        <ProductoDetalle
+          producto={sel}
+          onClose={() => setSel(null)}
+          onSaved={async () => { await load(); }}
+          notify={notify}
+        />
+      )}
     </div>
   );
 }

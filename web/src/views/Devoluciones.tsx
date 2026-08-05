@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.ts";
-import type { Deposito, Devolucion, StockConsolidado } from "../lib/types.ts";
+import type { Deposito, Devolucion, DevolucionItem, StockConsolidado } from "../lib/types.ts";
 
 const DEST_NO_APTA = [
   { v: "tirar", l: "Tirar" },
@@ -8,205 +8,385 @@ const DEST_NO_APTA = [
   { v: "repuesto", l: "Repuesto" },
 ];
 
+// Etiqueta del depósito de retiro a partir del código.
+const RETIRO_LABEL: Record<string, string> = { GEN: "Genpol", FLX: "Flexit" };
+
 export function Devoluciones({ notify }: { notify: (m: string) => void }) {
   const [deps, setDeps] = useState<Deposito[]>([]);
   const [prods, setProds] = useState<StockConsolidado[]>([]);
   const [lista, setLista] = useState<Devolucion[]>([]);
   const [saving, setSaving] = useState(false);
-  const [deciding, setDeciding] = useState<string | null>(null);
-
-  // form
-  const [producto, setProducto] = useState("");
-  const [cantidad, setCantidad] = useState(1);
-  const [canal, setCanal] = useState("ML");
-  const [ventaRef, setVentaRef] = useState("");
-  const [motivo, setMotivo] = useState("");
-  const [foto, setFoto] = useState<File | null>(null);
-  const [subiendo, setSubiendo] = useState(false);
+  const [detalle, setDetalle] = useState<Devolucion | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
 
   async function load() {
     const [d, p, l] = await Promise.all([api.depositos(), api.stock(), api.devoluciones()]);
     setDeps(d); setProds(p); setLista(l);
-    if (!producto && p[0]) setProducto(p[0].producto_id);
+    if (detalle) setDetalle(l.find((x) => x.id === detalle.id) ?? null);
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
-  const depByCode = (c: string) => deps.find((d) => d.codigo === c);
-  const nombreProd = (dv: Devolucion) => dv.sku ?? prods.find((p) => p.producto_id === dv.producto_id)?.sku ?? "—";
+  const depCode = (id: string | null) => deps.find((d) => d.id === id)?.codigo ?? null;
+  const skuNombre = (sku: string | null) => prods.find((p) => (p.sku ?? "").toLowerCase() === (sku ?? "").toLowerCase())?.nombre;
 
-  async function cargar() {
-    if (!producto) return notify("Elegí un producto");
-    if (!motivo.trim()) return notify("El motivo es obligatorio");
-    setSaving(true);
-    try {
-      let foto_url: string | undefined;
-      if (foto) { setSubiendo(true); foto_url = (await api.subirFoto(foto)) ?? undefined; setSubiendo(false); }
-      const origen = canal === "ML" ? depByCode("GEN") : depByCode("FLX");
-      await api.cargarDevolucion({
-        producto_id: producto, sku: prods.find((p) => p.producto_id === producto)?.sku,
-        cantidad, canal, venta_ref: ventaRef || undefined, motivo, foto_url,
-        deposito_origen_id: origen?.id ?? deps[0].id,
-      });
-      setVentaRef(""); setMotivo(""); setCantidad(1); setFoto(null);
-      await load();
-      notify("Devolución cargada · remito de retiro generado");
-    } catch (e) {
-      notify("Error: " + (e as Error).message);
-    } finally {
-      setSaving(false); setSubiendo(false);
-    }
-  }
-
-  async function recibir(id: string) {
-    setSaving(true);
-    try { await api.recibirDevolucion(id); await load(); notify("Marcada como recibida en oficina"); }
-    catch (e) { notify("Error: " + (e as Error).message); } finally { setSaving(false); }
-  }
-
-  async function decidir(id: string, apta: boolean, opts: { destino?: string; destino_no_apta?: string }) {
-    setSaving(true);
-    try {
-      await api.decidirDevolucion({ devolucion_id: id, apta, deposito_destino_id: opts.destino, destino_no_apta: opts.destino_no_apta });
-      setDeciding(null); await load();
-      notify(apta ? "Apta · reingresada al stock (+ nota de crédito)" : "No apta · dada de baja");
-    } catch (e) { notify("Error: " + (e as Error).message); } finally { setSaving(false); }
-  }
-
-  const porRetirar = lista.filter((d) => ["cargada", "retiro_generado"].includes(d.estado));
+  const enProceso = lista.filter((d) => d.estado === "en_proceso");
+  const porRetirar = lista.filter((d) => d.estado === "por_retirar");
   const enOficina = lista.filter((d) => d.estado === "en_oficina");
-  const resueltas = lista.filter((d) => ["apta", "no_apta"].includes(d.estado));
+  const resueltas = lista.filter((d) => ["apta", "no_apta", "parcial"].includes(d.estado));
 
-  function Card({ d, children }: { d: Devolucion; children?: React.ReactNode }) {
-    return (
-      <div className="kb-card">
-        <div className="between">
-          <span className="sku mono">{nombreProd(d)}</span>
-          <span className="badge neutral">{d.canal ?? "—"} · {d.cantidad}u</span>
-        </div>
-        {d.motivo && <p className="kb-motivo">{d.motivo}</p>}
-        {d.foto_url && <a href={d.foto_url} target="_blank" rel="noreferrer"><img className="kb-foto" src={d.foto_url} alt="foto devolución" /></a>}
-        {children}
-      </div>
-    );
+  async function act(fn: () => Promise<unknown>, ok: string) {
+    setSaving(true);
+    try { await fn(); await load(); notify(ok); }
+    catch (e) { notify("Error: " + (e as Error).message); }
+    finally { setSaving(false); }
   }
 
   return (
     <div className="stack">
       <div className="section-head">
         <div><span className="eyebrow">Devoluciones</span><h2>Circuito de devoluciones</h2></div>
-        <span className="muted">{porRetirar.length + enOficina.length} pendiente(s)</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="muted">{enProceso.length + porRetirar.length + enOficina.length} activa(s)</span>
+          <button className="btn ghost btn-sm" onClick={() => setManualOpen((v) => !v)}>
+            {manualOpen ? "Cerrar" : "+ Cargar manual (T. Nube)"}
+          </button>
+        </div>
       </div>
 
-      {/* Cargar */}
-      <div className="card card-pad">
-        <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Cargar una devolución</h3>
-        <div className="row2">
-          <div className="field">
-            <label>Producto</label>
-            <select className="select" value={producto} onChange={(e) => setProducto(e.target.value)}>
-              {prods.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku} · {p.nombre}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label>Canal</label>
-            <select className="select" value={canal} onChange={(e) => setCanal(e.target.value)}>
-              <option value="ML">Mercado Libre (Full → Genpol)</option>
-              <option value="TN">Tienda Nube / Flex → Flexit</option>
-            </select>
-          </div>
-        </div>
-        <div className="row2">
-          <div className="field"><label>Cantidad</label><input className="input" type="number" min={1} value={cantidad} onChange={(e) => setCantidad(Math.max(1, Number(e.target.value) || 1))} /></div>
-          <div className="field"><label>N° de venta (opcional)</label><input className="input" value={ventaRef} onChange={(e) => setVentaRef(e.target.value)} placeholder="2000004512345" /></div>
-        </div>
-        <div className="field">
-          <label>Motivo <span style={{ color: "var(--bad)" }}>*</span></label>
-          <input className="input" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="No configura wifi, llegó dañado…" />
-        </div>
-        <div className="field">
-          <label>Foto (opcional — sirve para reclamar al proveedor)</label>
-          <input type="file" accept="image/*" onChange={(e) => setFoto(e.target.files?.[0] ?? null)} />
-          {foto && <span className="muted">{foto.name}</span>}
-        </div>
-        <button className="btn primary" onClick={cargar} disabled={saving}>{subiendo ? "Subiendo foto…" : saving ? "Cargando…" : "Cargar y generar retiro"}</button>
-      </div>
+      {manualOpen && (
+        <CargaManual prods={prods} saving={saving} notify={notify}
+          onDone={async () => { setManualOpen(false); await load(); }} />
+      )}
 
-      {/* Kanban */}
-      <div className="kanban">
+      {/* Kanban de 4 etapas */}
+      <div className="kanban k4">
+        {/* 1 · En proceso (vienen de ML por API) */}
+        <div className="kb-col">
+          <div className="kb-head"><span>En proceso</span><span className="kb-count">{enProceso.length}</span></div>
+          <p className="kb-hint">Devoluciones abiertas en Mercado Libre. Todavía en tránsito.</p>
+          {enProceso.length === 0 && <p className="kb-empty">—</p>}
+          {enProceso.map((d) => (
+            <DevCard key={d.id} d={d} skuNombre={skuNombre} depCode={depCode}>
+              <button className="btn ghost btn-sm" disabled={saving} onClick={() => setDetalle(d)}>Ver SKUs</button>
+            </DevCard>
+          ))}
+        </div>
+
+        {/* 2 · Por retirar */}
         <div className="kb-col">
           <div className="kb-head"><span>Por retirar</span><span className="kb-count">{porRetirar.length}</span></div>
+          <p className="kb-hint">ML marcó entregado. Clasificá el depósito y generá el remito.</p>
           {porRetirar.length === 0 && <p className="kb-empty">—</p>}
           {porRetirar.map((d) => (
-            <Card d={d} key={d.id}>
-              <button className="btn ghost btn-sm" disabled={saving} onClick={() => recibir(d.id)}>Recibí en oficina →</button>
-            </Card>
+            <DevCard key={d.id} d={d} skuNombre={skuNombre} depCode={depCode}>
+              <ClasificarBar d={d} depCode={depCode} saving={saving}
+                onClasificar={(c) => act(() => api.clasificarDevolucion(d.id, c), `Clasificada · retirar de ${RETIRO_LABEL[c]}`)}
+                onRemito={() => act(() => api.generarRemitoDevolucion(d.id), "Remito de retiro generado · pasó a Oficina")} />
+              <button className="btn linky btn-sm" onClick={() => setDetalle(d)}>ver SKUs</button>
+            </DevCard>
           ))}
         </div>
 
+        {/* 3 · En oficina */}
         <div className="kb-col">
           <div className="kb-head"><span>En oficina · revisar</span><span className="kb-count">{enOficina.length}</span></div>
+          <p className="kb-hint">Mercadería retirada. Marcá cada SKU: apto vuelve al stock, no apto es baja.</p>
           {enOficina.length === 0 && <p className="kb-empty">—</p>}
           {enOficina.map((d) => (
-            <Card d={d} key={d.id}>
-              {deciding === d.id
-                ? <Decision deps={deps} saving={saving}
-                    onApta={(destino) => decidir(d.id, true, { destino })}
-                    onNoApta={(dn) => decidir(d.id, false, { destino_no_apta: dn })}
-                    onCancel={() => setDeciding(null)} />
-                : <button className="btn primary btn-sm" onClick={() => setDeciding(d.id)}>Decidir</button>}
-            </Card>
+            <DevCard key={d.id} d={d} skuNombre={skuNombre} depCode={depCode}>
+              <div className="between" style={{ marginTop: 4 }}>
+                <span className="muted">{(d.items ?? []).filter((i) => i.apta == null).length} sin decidir</span>
+                <button className="btn primary btn-sm" onClick={() => setDetalle(d)}>Revisar SKUs</button>
+              </div>
+            </DevCard>
           ))}
         </div>
 
+        {/* 4 · Resueltas */}
         <div className="kb-col">
           <div className="kb-head"><span>Resueltas</span><span className="kb-count">{resueltas.length}</span></div>
           {resueltas.length === 0 && <p className="kb-empty">—</p>}
           {resueltas.map((d) => (
-            <Card d={d} key={d.id}>
-              {d.estado === "apta"
-                ? <span className="badge ok">Apta · reingresada</span>
-                : <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    <span className="badge sin_stock">No apta{d.destino_no_apta ? " · " + d.destino_no_apta : ""}</span>
-                    {d.valor_perdida != null && <span className="muted mono">−${Number(d.valor_perdida).toLocaleString("es-AR")}</span>}
-                  </div>}
-            </Card>
+            <DevCard key={d.id} d={d} skuNombre={skuNombre} depCode={depCode}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+                {d.estado === "apta" && <span className="badge ok">Apta · reingresada</span>}
+                {d.estado === "no_apta" && <span className="badge sin_stock">No apta · baja</span>}
+                {d.estado === "parcial" && <span className="badge neutral">Parcial</span>}
+                {d.valor_perdida != null && Number(d.valor_perdida) > 0 &&
+                  <span className="muted mono">−${Number(d.valor_perdida).toLocaleString("es-AR")}</span>}
+                <button className="btn linky btn-sm" onClick={() => setDetalle(d)}>detalle</button>
+              </div>
+            </DevCard>
           ))}
         </div>
+      </div>
+
+      {detalle && (
+        <DetalleModal d={detalle} deps={deps} prods={prods} saving={saving} depCode={depCode} skuNombre={skuNombre}
+          onClose={() => setDetalle(null)}
+          onDecidir={(item_id, apta, opts) => act(() => api.decidirItemDevolucion({ item_id, apta, ...opts }), apta ? "SKU apto · reingresado al stock" : "SKU dado de baja")} />
+      )}
+    </div>
+  );
+}
+
+// ---- Tarjeta de devolución ------------------------------------------------
+function DevCard({ d, children, skuNombre, depCode }: {
+  d: Devolucion; children?: React.ReactNode;
+  skuNombre: (s: string | null) => string | undefined; depCode: (id: string | null) => string | null;
+}) {
+  const items = d.items ?? [];
+  const retiro = depCode(d.deposito_retiro_id);
+  return (
+    <div className="kb-card">
+      <div className="between">
+        <span className="badge neutral">{d.canal ?? "—"} · {d.cantidad}u</span>
+        <span className="muted mono" style={{ fontSize: ".72rem" }}>
+          {d.origen === "ml_api" ? "ML API" : "manual"}{d.venta_ref ? " · " + d.venta_ref : ""}
+        </span>
+      </div>
+      {retiro && <div className="dev-retiro">retira de <b>{RETIRO_LABEL[retiro] ?? retiro}</b></div>}
+      <ul className="dev-skus">
+        {items.length === 0 && <li className="muted">sin SKUs informados</li>}
+        {items.map((it) => (
+          <li key={it.id}>
+            <span className="mono">{it.sku ?? "—"}</span>
+            <span className="muted"> ×{it.cantidad}{skuNombre(it.sku) ? " · " + skuNombre(it.sku) : ""}</span>
+            {it.apta === true && <span className="badge ok tiny">apta</span>}
+            {it.apta === false && <span className="badge sin_stock tiny">baja</span>}
+          </li>
+        ))}
+      </ul>
+      {d.motivo && <p className="kb-motivo">{d.motivo}</p>}
+      {children}
+    </div>
+  );
+}
+
+// ---- Barra de clasificación + generar remito ------------------------------
+function ClasificarBar({ d, depCode, saving, onClasificar, onRemito }: {
+  d: Devolucion; depCode: (id: string | null) => string | null; saving: boolean;
+  onClasificar: (c: "GEN" | "FLX") => void; onRemito: () => void;
+}) {
+  const clasif = depCode(d.deposito_retiro_id);
+  return (
+    <div className="stack-xs" style={{ marginTop: 6 }}>
+      <div className="segbar">
+        <span className="muted">Retirar de:</span>
+        <button className={"seg" + (clasif === "GEN" ? " on" : "")} disabled={saving} onClick={() => onClasificar("GEN")}>Genpol</button>
+        <button className={"seg" + (clasif === "FLX" ? " on" : "")} disabled={saving} onClick={() => onClasificar("FLX")}>Flexit</button>
+      </div>
+      <button className="btn primary btn-sm" disabled={saving || !clasif} onClick={onRemito}
+        title={!clasif ? "Clasificá primero el depósito" : ""}>Generar remito</button>
+    </div>
+  );
+}
+
+// ---- Modal de detalle (decisión por SKU) ----------------------------------
+function DetalleModal({ d, deps, saving, depCode, skuNombre, onClose, onDecidir }: {
+  d: Devolucion; deps: Deposito[]; prods: StockConsolidado[]; saving: boolean;
+  depCode: (id: string | null) => string | null;
+  skuNombre: (s: string | null) => string | undefined;
+  onClose: () => void;
+  onDecidir: (item_id: string, apta: boolean, opts: { deposito_destino_id?: string; destino_no_apta?: string }) => void;
+}) {
+  const items = d.items ?? [];
+  const decidible = d.estado === "en_oficina";
+  const retiro = depCode(d.deposito_retiro_id);
+  const genId = deps.find((x) => x.codigo === "GEN")?.id;
+  const flxId = deps.find((x) => x.codigo === "FLX")?.id;
+  const ofiId = deps.find((x) => x.codigo === "OFI")?.id;
+
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="between">
+          <div>
+            <span className="eyebrow">Devolución {d.origen === "ml_api" ? "· Mercado Libre" : "· manual"}</span>
+            <h3 style={{ margin: "2px 0" }}>{d.canal ?? "—"} · {d.venta_ref ?? "sin nº de venta"}</h3>
+          </div>
+          <button className="btn ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        {retiro && <p className="muted">Retiro desde <b>{RETIRO_LABEL[retiro] ?? retiro}</b> → Oficina</p>}
+        {d.motivo && <p className="kb-motivo">{d.motivo}</p>}
+
+        <table className="tbl" style={{ marginTop: 10 }}>
+          <thead><tr><th>SKU</th><th>Cant.</th><th>Estado</th><th style={{ textAlign: "right" }}>Decisión</th></tr></thead>
+          <tbody>
+            {items.map((it) => (
+              <ItemRow key={it.id} it={it} nombre={skuNombre(it.sku)} decidible={decidible} saving={saving}
+                genId={genId} flxId={flxId} ofiId={ofiId}
+                onDecidir={onDecidir} />
+            ))}
+            {items.length === 0 && <tr><td colSpan={4} className="muted">sin SKUs</td></tr>}
+          </tbody>
+        </table>
+
+        {!decidible && d.estado !== "apta" && d.estado !== "no_apta" && d.estado !== "parcial" && (
+          <p className="muted" style={{ marginTop: 8 }}>
+            Los SKUs se pueden marcar apto / no apto cuando la devolución está <b>En oficina</b>
+            (después de generar el remito).
+          </p>
+        )}
       </div>
     </div>
   );
 }
 
-function Decision({ deps, saving, onApta, onNoApta, onCancel }: {
-  deps: Deposito[]; saving: boolean;
-  onApta: (destino: string) => void; onNoApta: (dn: string) => void; onCancel: () => void;
+function ItemRow({ it, nombre, decidible, saving, genId, flxId, ofiId, onDecidir }: {
+  it: DevolucionItem; nombre?: string; decidible: boolean; saving: boolean;
+  genId?: string; flxId?: string; ofiId?: string;
+  onDecidir: (item_id: string, apta: boolean, opts: { deposito_destino_id?: string; destino_no_apta?: string }) => void;
 }) {
   const [modo, setModo] = useState<"" | "apta" | "no">("");
-  const [destino, setDestino] = useState(deps.find((d) => d.codigo === "GEN")?.id ?? deps[0]?.id ?? "");
+  const [destino, setDestino] = useState(genId ?? ofiId ?? "");
   const [dn, setDn] = useState("tirar");
-  if (modo === "") return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-      <button className="btn ok btn-sm" onClick={() => setModo("apta")}>Apta</button>
-      <button className="btn bad btn-sm" onClick={() => setModo("no")}>No apta</button>
-      <button className="btn ghost btn-sm" onClick={onCancel}>✕</button>
-    </div>
-  );
-  if (modo === "apta") return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-      <select className="select" style={{ width: 92 }} value={destino} onChange={(e) => setDestino(e.target.value)}>
-        {deps.map((d) => <option key={d.id} value={d.id}>{d.codigo}</option>)}
-      </select>
-      <button className="btn ok btn-sm" disabled={saving} onClick={() => onApta(destino)}>Reingresar</button>
-      <button className="btn ghost btn-sm" onClick={onCancel}>✕</button>
-    </div>
-  );
+
+  const estadoBadge = it.apta === true
+    ? <span className="badge ok">apta</span>
+    : it.apta === false
+      ? <span className="badge sin_stock">baja{it.destino_no_apta ? " · " + it.destino_no_apta : ""}</span>
+      : <span className="badge neutral">sin decidir</span>;
+
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-      <select className="select" style={{ width: 110 }} value={dn} onChange={(e) => setDn(e.target.value)}>
-        {DEST_NO_APTA.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
-      </select>
-      <button className="btn bad btn-sm" disabled={saving} onClick={() => onNoApta(dn)}>Dar de baja</button>
-      <button className="btn ghost btn-sm" onClick={onCancel}>✕</button>
+    <tr>
+      <td><span className="mono">{it.sku ?? "—"}</span>{nombre && <div className="muted" style={{ fontSize: ".78rem" }}>{nombre}</div>}</td>
+      <td>{it.cantidad}</td>
+      <td>{estadoBadge}</td>
+      <td style={{ textAlign: "right" }}>
+        {!decidible || it.apta != null ? <span className="muted">—</span>
+          : modo === "" ? (
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+              <button className="btn ok btn-sm" onClick={() => setModo("apta")}>Apta</button>
+              <button className="btn bad btn-sm" onClick={() => setModo("no")}>No apta</button>
+            </div>
+          ) : modo === "apta" ? (
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
+              <select className="select" style={{ width: 96 }} value={destino} onChange={(e) => setDestino(e.target.value)}>
+                {ofiId && <option value={ofiId}>Oficina</option>}
+                {genId && <option value={genId}>Genpol</option>}
+                {flxId && <option value={flxId}>Flexit</option>}
+              </select>
+              <button className="btn ok btn-sm" disabled={saving} onClick={() => onDecidir(it.id, true, { deposito_destino_id: destino })}>✓</button>
+              <button className="btn ghost btn-sm" onClick={() => setModo("")}>✕</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
+              <select className="select" style={{ width: 100 }} value={dn} onChange={(e) => setDn(e.target.value)}>
+                {DEST_NO_APTA.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+              <button className="btn bad btn-sm" disabled={saving} onClick={() => onDecidir(it.id, false, { destino_no_apta: dn })}>Baja</button>
+              <button className="btn ghost btn-sm" onClick={() => setModo("")}>✕</button>
+            </div>
+          )}
+      </td>
+    </tr>
+  );
+}
+
+// ---- Carga manual (Tienda Nube o cualquier caso sin API) -------------------
+function CargaManual({ prods, saving, notify, onDone }: {
+  prods: StockConsolidado[]; saving: boolean;
+  notify: (m: string) => void; onDone: () => void;
+}) {
+  const [canal, setCanal] = useState("TN");
+  const [depRetiro, setDepRetiro] = useState<"GEN" | "FLX">("FLX");
+  const [ventaRef, setVentaRef] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [foto, setFoto] = useState<File | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [rows, setRows] = useState<{ producto_id: string; cantidad: number }[]>([]);
+  const [pick, setPick] = useState(prods[0]?.producto_id ?? "");
+  const [cant, setCant] = useState(1);
+  const [busy, setBusy] = useState(false);
+
+  const prodById = useMemo(() => new Map(prods.map((p) => [p.producto_id, p])), [prods]);
+
+  // El canal sugiere el depósito de retiro (ML→Genpol, TN/Flex→Flexit).
+  function setCanalAndDep(c: string) { setCanal(c); setDepRetiro(c === "ML" ? "GEN" : "FLX"); }
+
+  function addRow() {
+    if (!pick) return;
+    setRows((r) => {
+      const ex = r.find((x) => x.producto_id === pick);
+      if (ex) return r.map((x) => x.producto_id === pick ? { ...x, cantidad: x.cantidad + cant } : x);
+      return [...r, { producto_id: pick, cantidad: cant }];
+    });
+    setCant(1);
+  }
+
+  async function guardar() {
+    if (!rows.length) return notify("Agregá al menos un SKU");
+    setBusy(true);
+    try {
+      let foto_url: string | undefined;
+      if (foto) { setSubiendo(true); foto_url = (await api.subirFoto(foto)) ?? undefined; setSubiendo(false); }
+      await api.cargarDevolucion({
+        canal, venta_ref: ventaRef || undefined, motivo: motivo || undefined, foto_url,
+        deposito_retiro: depRetiro,
+        items: rows.map((r) => ({ producto_id: r.producto_id, sku: prodById.get(r.producto_id)?.sku ?? undefined, cantidad: r.cantidad })),
+      });
+      notify("Devolución cargada · lista para retirar");
+      onDone();
+    } catch (e) { notify("Error: " + (e as Error).message); }
+    finally { setBusy(false); setSubiendo(false); }
+  }
+
+  return (
+    <div className="card card-pad">
+      <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Cargar devolución manual</h3>
+      <div className="row2">
+        <div className="field">
+          <label>Canal</label>
+          <select className="select" value={canal} onChange={(e) => setCanalAndDep(e.target.value)}>
+            <option value="TN">Tienda Nube</option>
+            <option value="ML">Mercado Libre</option>
+            <option value="OTRO">Otro</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Retirar de</label>
+          <select className="select" value={depRetiro} onChange={(e) => setDepRetiro(e.target.value as "GEN" | "FLX")}>
+            <option value="FLX">Flexit</option>
+            <option value="GEN">Genpol</option>
+          </select>
+        </div>
+      </div>
+      <div className="row2">
+        <div className="field"><label>N° de venta (opcional)</label><input className="input" value={ventaRef} onChange={(e) => setVentaRef(e.target.value)} placeholder="#1234" /></div>
+        <div className="field"><label>Motivo (opcional)</label><input className="input" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="No configura wifi…" /></div>
+      </div>
+
+      <div className="field">
+        <label>SKUs devueltos</label>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select className="select" style={{ flex: 1, minWidth: 200 }} value={pick} onChange={(e) => setPick(e.target.value)}>
+            {prods.map((p) => <option key={p.producto_id} value={p.producto_id}>{p.sku} · {p.nombre}</option>)}
+          </select>
+          <input className="input" style={{ width: 80 }} type="number" min={1} value={cant} onChange={(e) => setCant(Math.max(1, Number(e.target.value) || 1))} />
+          <button className="btn ghost btn-sm" onClick={addRow}>+ Agregar</button>
+        </div>
+      </div>
+
+      {rows.length > 0 && (
+        <ul className="dev-skus" style={{ marginTop: 4 }}>
+          {rows.map((r) => (
+            <li key={r.producto_id} className="between">
+              <span><span className="mono">{prodById.get(r.producto_id)?.sku}</span> <span className="muted">×{r.cantidad}</span></span>
+              <button className="btn linky btn-sm" onClick={() => setRows((x) => x.filter((y) => y.producto_id !== r.producto_id))}>quitar</button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="field" style={{ marginTop: 8 }}>
+        <label>Foto (opcional)</label>
+        <input type="file" accept="image/*" onChange={(e) => setFoto(e.target.files?.[0] ?? null)} />
+        {foto && <span className="muted">{foto.name}</span>}
+      </div>
+      <button className="btn primary" disabled={busy || saving} onClick={guardar}>
+        {subiendo ? "Subiendo foto…" : busy ? "Guardando…" : "Cargar devolución"}
+      </button>
     </div>
   );
 }

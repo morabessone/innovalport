@@ -82,7 +82,9 @@ export const api = {
   async devoluciones(): Promise<Devolucion[]> {
     if (!connected) return demo.devoluciones();
     const { data, error } = await supabase!
-      .from("devoluciones").select("*").order("created_at", { ascending: false }).limit(50);
+      .from("devoluciones")
+      .select("*, items:devolucion_items(*)")
+      .order("created_at", { ascending: false }).limit(80);
     if (error) throw error;
     return data as Devolucion[];
   },
@@ -113,20 +115,35 @@ export const api = {
     });
   },
 
+  // Carga MANUAL (Tienda Nube o cualquier caso sin API). Entra en 'por_retirar'.
   async cargarDevolucion(payload: {
-    producto_id?: string; sku?: string; cantidad: number; canal: string;
-    venta_ref?: string; motivo?: string; deposito_origen_id: string; foto_url?: string;
+    canal: string; venta_ref?: string; motivo?: string; foto_url?: string;
+    deposito_retiro?: string; // GEN | FLX
+    items: { sku?: string; producto_id?: string; cantidad: number }[];
   }) {
-    if (!connected) return demo.cargarDevolucion(payload);
+    if (!connected) return demo.cargarDevolucion(payload as any);
     await callFn("acciones", { accion: "cargar_devolucion", payload });
   },
 
-  async decidirDevolucion(payload: {
-    devolucion_id: string; apta: boolean; deposito_destino_id?: string;
-    valor_perdida?: number; destino_no_apta?: string; cb_comprobante_id?: string;
+  // Clasifica de qué depósito se retira: GEN (Genpol) o FLX (Flexit).
+  async clasificarDevolucion(devolucion_id: string, deposito_retiro: "GEN" | "FLX") {
+    if (!connected) return;
+    await callFn("acciones", { accion: "clasificar_devolucion", payload: { devolucion_id, deposito_retiro } });
+  },
+
+  // Genera el remito de retiro con los SKUs reales → pasa a 'en_oficina'.
+  async generarRemitoDevolucion(devolucion_id: string) {
+    if (!connected) return;
+    await callFn("acciones", { accion: "generar_remito_devolucion", payload: { devolucion_id } });
+  },
+
+  // Decide un ítem (SKU) ya en oficina: apto vuelve al stock, no apto es baja.
+  async decidirItemDevolucion(payload: {
+    item_id: string; apta: boolean; deposito_destino_id?: string;
+    destino_no_apta?: string; valor_perdida?: number;
   }) {
-    if (!connected) return demo.decidirDevolucion(payload.devolucion_id, payload.apta, payload.deposito_destino_id, payload.valor_perdida);
-    await callFn("acciones", { accion: "decidir_devolucion", payload });
+    if (!connected) return;
+    await callFn("acciones", { accion: "decidir_item_devolucion", payload });
   },
 
   async bajaProducto(producto_id: string, activo: boolean) {

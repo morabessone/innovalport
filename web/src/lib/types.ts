@@ -32,6 +32,17 @@ export interface Remito {
   created_at: string;
 }
 
+export interface DevolucionItem {
+  id: string;
+  devolucion_id: string;
+  sku: string | null;
+  producto_id: string | null;
+  cantidad: number;
+  apta: boolean | null;          // null = sin decidir
+  destino_no_apta: string | null;
+  valor_perdida: number | null;
+}
+
 export interface Devolucion {
   id: string;
   sku: string | null;
@@ -40,11 +51,15 @@ export interface Devolucion {
   canal: string | null;
   venta_ref: string | null;
   motivo: string | null;
-  estado: string;    // cargada | retiro_generado | en_oficina | apta | no_apta
+  estado: string;    // en_proceso | por_retirar | en_oficina | apta | no_apta | parcial
+  origen: string;    // ml_api | manual
+  deposito_retiro_id: string | null;
+  entregada_at: string | null;
   valor_perdida: number | null;
   destino_no_apta: string | null;
   foto_url: string | null;
   created_at: string;
+  items?: DevolucionItem[];
 }
 
 export interface Auditoria {

@@ -1,19 +1,19 @@
 // ============================================================================
-// devoluciones-sync — trae las devoluciones de Mercado Libre por API
+// devoluciones-sync — trae las devoluciones de Mercado Libre por API (SOLO LECTURA)
 // ----------------------------------------------------------------------------
-// Flujo:
-//   1) /post-purchase/v1/claims/search  -> reclamos del vendedor con devolución
-//   2) /post-purchase/v1/claims/{id}/returns -> estado del envío de retorno
-//   3) /orders/{order_id} -> SKUs reales + cantidades (seller_custom_field)
+// Se apoya SOLO en endpoints confirmados:
+//   /post-purchase/v1/claims/search?status=opened|closed   (reclamos de tipo return)
+//   /orders/{id}         -> SKUs reales + logística (fulfillment=Full)
+//   /items/{id}          -> fallback para el SKU (seller_custom_field)
 //
-// Mapea a la tabla `devoluciones` (idempotente por ml_claim_id):
-//   - retorno en tránsito           -> estado 'en_proceso'
-//   - retorno entregado al vendedor -> estado 'por_retirar' (+ entregada_at)
-//   - clasifica GEN/FLX según la logística de la orden (fulfillment=Full→GEN).
+// Mapeo de estado (sin depender del sub-endpoint /returns):
+//   claim status=opened                         -> 'en_proceso'  (en trámite)
+//   claim status=closed + resolución item_returned -> 'por_retirar' (volvió, a retirar)
+//   depósito de retiro: fulfillment=Full -> GENPOL(GEN) ; resto -> Flexit(FLX)
 //
-// SEGURIDAD: esta función NO está en cron todavía. Correr con ?dry=1 devuelve
-// lo que encontró SIN escribir, para validar el formato real contra un reclamo
-// verdadero antes de activarla. Nada se escribe a Contabilium.
+// Escribe SOLO en la base de la app (devoluciones / devolucion_items).
+// Nunca escribe a ML / TN / Contabilium. Idempotente por ml_claim_id.
+// ?dry=1 no escribe. ?raw=1 vuelca el primer reclamo. ?dias=N ventana (30 def).
 // ============================================================================
 import { createClient } from "jsr:@supabase/supabase-js@2";
 const API = "https://api.mercadolibre.com";
@@ -21,6 +21,7 @@ const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers
 function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } }); }
 function db() { return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!); }
 type DB = ReturnType<typeof db>;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function getToken(d: DB): Promise<{ token: string; seller: string }> {
   const { data: cfg } = await d.from("canal_config").select("*").eq("tipo", "ml").single();
@@ -41,25 +42,50 @@ async function mlGet(path: string, token: string) {
   try { return JSON.parse(txt); } catch { return {}; }
 }
 
-// El estado del envío de retorno nos dice si ya llegó al vendedor.
-function estaEntregado(ret: Record<string, any>): boolean {
-  const s = String(ret?.status ?? ret?.shipping?.status ?? ret?.status_money ?? "").toLowerCase();
-  return ["delivered", "closed", "ready_to_ship_received", "received"].some((k) => s.includes(k));
+// Trae los reclamos de tipo devolución en un estado dado (paginado).
+async function claimsPorEstado(status: string, token: string): Promise<any[]> {
+  const out: any[] = [];
+  for (let offset = 0; offset < 200; offset += 50) {
+    const s = await mlGet(`/post-purchase/v1/claims/search?status=${status}&limit=50&offset=${offset}`, token);
+    const arr = s.data ?? s.results ?? [];
+    out.push(...arr.filter((c: any) => String(c.type ?? "").includes("return")));
+    if (arr.length < 50) break;
+    await sleep(120);
+  }
+  return out;
 }
 
-// SKUs + cantidades reales desde la orden asociada al reclamo.
-async function skusDeOrden(orderId: string, token: string): Promise<{ sku: string; cantidad: number }[]> {
+// Resuelve el SKU real de un order_item (con fallback a /items/{id}).
+const itemSkuCache = new Map<string, string | null>();
+async function skuDeItem(oi: any, token: string): Promise<string | null> {
+  const direct = oi.item?.seller_custom_field ?? oi.item?.seller_sku ?? null;
+  if (direct) return String(direct);
+  const itemId = oi.item?.id ? String(oi.item.id) : null;
+  if (!itemId) return null;
+  if (itemSkuCache.has(itemId)) return itemSkuCache.get(itemId)!;
+  let sku: string | null = null;
   try {
-    const o = await mlGet(`/orders/${orderId}`, token);
-    const out: { sku: string; cantidad: number }[] = [];
-    for (const oi of (o.order_items ?? [])) {
-      const sku = oi.item?.seller_custom_field ?? oi.item?.seller_sku ?? oi.item?.id ?? null;
-      if (sku) out.push({ sku: String(sku), cantidad: Number(oi.quantity ?? 1) });
+    const it = await mlGet(`/items/${itemId}?attributes=seller_custom_field,seller_sku,attributes,variations`, token);
+    sku = it.seller_custom_field ?? it.seller_sku ?? null;
+    if (!sku) {
+      const a = (it.attributes ?? []).find((x: any) => x.id === "SELLER_SKU");
+      sku = a?.value_name ?? null;
     }
-    // fulfillment = Full (se retira de Genpol), self_service/xd_drop_off = Flex (Flexit)
-    const logistic = String(o.shipping?.logistic_type ?? o.shipping?.logistic?.type ?? "");
-    return out.map((x) => ({ ...x, logistic } as any));
-  } catch { return []; }
+  } catch { /* ignora */ }
+  itemSkuCache.set(itemId, sku ? String(sku) : null);
+  return sku ? String(sku) : null;
+}
+
+// De la orden: SKUs+cantidades y la logística (para clasificar depósito).
+async function detalleOrden(orderId: string, token: string) {
+  const o = await mlGet(`/orders/${orderId}`, token);
+  const items: { sku: string; cantidad: number }[] = [];
+  for (const oi of (o.order_items ?? [])) {
+    const sku = await skuDeItem(oi, token);
+    if (sku) items.push({ sku, cantidad: Number(oi.quantity ?? 1) });
+  }
+  const logistic = String(o.shipping?.logistic_type ?? "");
+  return { items, logistic };
 }
 
 Deno.serve(async (req) => {
@@ -68,45 +94,50 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const dry = url.searchParams.get("dry") === "1";
   const dias = Number(url.searchParams.get("dias") ?? 30);
+  const corte = Date.now() - dias * 864e5;
   try {
     const { token, seller } = await getToken(d);
-    const desde = new Date(Date.now() - dias * 864e5).toISOString().slice(0, 10);
+    const { data: deps } = await d.from("depositos").select("id, codigo").in("codigo", ["GEN", "FLX"]);
+    const depId = (c: string) => deps?.find((x) => x.codigo === c)?.id ?? null;
 
-    // 1) Reclamos con devolución. El endpoint de búsqueda pagina.
-    const search = await mlGet(`/post-purchase/v1/claims/search?limit=50&sort=date_created&range_field=date_created&range_from=${desde}`, token);
-    const claims = search.data ?? search.results ?? [];
+    // opened -> en proceso ; closed con item devuelto -> por retirar
+    const abiertos = await claimsPorEstado("opened", token);
+    const cerrados = await claimsPorEstado("closed", token);
+
+    type Fila = { claim: any; estado: string };
+    const filas: Fila[] = [];
+    for (const c of abiertos) {
+      if (new Date(c.date_created ?? c.last_updated ?? 0).getTime() < corte) continue;
+      filas.push({ claim: c, estado: "en_proceso" });
+    }
+    for (const c of cerrados) {
+      const devuelto = String(c.resolution?.reason ?? "").includes("item_returned") || c.resolution?.reason === "item_returned";
+      if (!devuelto) continue;
+      if (new Date(c.last_updated ?? c.date_created ?? 0).getTime() < corte) continue;
+      filas.push({ claim: c, estado: "por_retirar" });
+    }
+
+    if (dry && url.searchParams.get("raw") === "1") {
+      return json({ ok: true, dry: true, seller, abiertos: abiertos.length, cerrados: cerrados.length, filas: filas.length, raw_first: filas[0]?.claim ?? null });
+    }
 
     const diag: any[] = [];
     let creadas = 0, actualizadas = 0;
+    for (const { claim, estado } of filas) {
+      const claimId = String(claim.id ?? "");
+      const orderId = String(claim.resource_id ?? claim.resource?.id ?? "");
+      let det = { items: [] as { sku: string; cantidad: number }[], logistic: "" };
+      if (orderId) { try { det = await detalleOrden(orderId, token); } catch { /* sigue */ } }
+      const depCodigo = det.logistic.includes("fulfillment") ? "GEN" : "FLX";
 
-    const { data: ofiDeps } = await d.from("depositos").select("id, codigo").in("codigo", ["GEN", "FLX"]);
-    const depId = (c: string) => ofiDeps?.find((x) => x.codigo === c)?.id ?? null;
-
-    for (const c of claims) {
-      const claimId = String(c.id ?? c.claim_id ?? "");
-      if (!claimId) continue;
-      let ret: Record<string, any> = {};
-      try {
-        const rr = await mlGet(`/post-purchase/v1/claims/${claimId}/returns`, token);
-        ret = Array.isArray(rr) ? rr[0] ?? {} : rr?.data?.[0] ?? rr ?? {};
-      } catch { /* el reclamo puede no tener devolución todavía */ continue; }
-      if (!ret || Object.keys(ret).length === 0) continue;
-
-      const orderId = String(c.resource_id ?? c.resource?.id ?? ret.order_id ?? "");
-      const items = orderId ? await skusDeOrden(orderId, token) : [];
-      const entregado = estaEntregado(ret);
-      const logistic = String((items[0] as any)?.logistic ?? "");
-      const depCodigo = logistic.includes("fulfillment") ? "GEN" : "FLX";
-      const estado = entregado ? "por_retirar" : "en_proceso";
-
-      diag.push({ claimId, orderId, estado, entregado, skus: items.length, depCodigo, ret_status: ret?.status ?? ret?.shipping?.status ?? null });
+      diag.push({ claimId, orderId, estado, skus: det.items.length, depCodigo });
       if (dry) continue;
 
-      // Idempotente por ml_claim_id.
       const { data: ya } = await d.from("devoluciones").select("id, estado").eq("ml_claim_id", claimId).maybeSingle();
-      const totalU = items.reduce((a, i) => a + i.cantidad, 0) || 1;
+      const totalU = det.items.reduce((a, i) => a + i.cantidad, 0) || 1;
+      const entregado = estado === "por_retirar";
       const patch: Record<string, unknown> = {
-        origen: "ml_api", canal: "ML", ml_claim_id: claimId, ml_return_id: String(ret.id ?? ""),
+        origen: "ml_api", canal: "ML", ml_claim_id: claimId,
         venta_ref: orderId || null, cantidad: totalU, estado,
         deposito_retiro_id: entregado ? depId(depCodigo) : null,
         entregada_at: entregado ? new Date().toISOString() : null,
@@ -122,15 +153,13 @@ Deno.serve(async (req) => {
         if (error) { diag.push({ claimId, error: error.message }); continue; }
         devId = nuevo.id; creadas++;
       }
-      // Reemplazar ítems (los SKUs que informa ML).
       await d.from("devolucion_items").delete().eq("devolucion_id", devId);
-      for (const it of items) {
+      for (const it of det.items) {
         const { data: prod } = await d.from("productos").select("id").ilike("sku", it.sku).maybeSingle();
         await d.from("devolucion_items").insert({ devolucion_id: devId, sku: it.sku, producto_id: prod?.id ?? null, cantidad: it.cantidad });
       }
     }
-
-    return json({ ok: true, dry, seller, claims: claims.length, creadas, actualizadas, diag });
+    return json({ ok: true, dry, seller, abiertos: abiertos.length, cerrados: cerrados.length, creadas, actualizadas, diag });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }

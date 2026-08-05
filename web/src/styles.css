@@ -298,3 +298,32 @@ tr.rowlink:hover td { background: var(--accent-wash, rgba(30,99,230,.06)); }
 .login-err { color: var(--bad); font-size: .84rem; margin-bottom: 10px; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ===== Panel v2: multi-select, headers fijos, agrupado depósito↔canal ===== */
+.ms{ position:relative; display:inline-block; }
+.ms-btn{ cursor:pointer; white-space:nowrap; }
+.ms-btn.on{ border-color:var(--accent); color:var(--accent); background:var(--accent-wash); }
+.ms-caret{ opacity:.6; font-size:.8em; }
+.ms-back{ position:fixed; inset:0; z-index:40; }
+.ms-pop{ position:absolute; z-index:41; top:calc(100% + 6px); left:0; min-width:190px;
+  background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow-lift); padding:6px; }
+.ms-head{ display:flex; justify-content:space-between; align-items:center; padding:4px 8px 6px;
+  font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); font-weight:700; }
+.ms-clear{ background:none; border:none; color:var(--accent); font-size:.72rem; cursor:pointer; font-weight:700; }
+.ms-opt{ display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px; font-size:.86rem; cursor:pointer; }
+.ms-opt:hover{ background:var(--bg, #f6f8fc); }
+
+/* Headers fijos: la tabla scrollea dentro de su caja */
+.tbl-scroll{ max-height:70vh; overflow:auto; border-radius:14px; }
+table.stickyt thead th{ position:sticky; z-index:2; background:var(--card); }
+table.stickyt thead tr.grp th{ top:0; }
+table.stickyt thead tr.cols th{ top:30px; }
+table.stickyt thead tr.grp th.gdep,
+table.stickyt thead tr.grp th.gpub{ background:#eef2fb; }
+table.stickyt thead tr.cols th{ background:#f4f7fc; border-bottom:1px solid var(--line); }
+/* Primera columna (Producto) fija también al scrollear horizontal */
+table.stickyt th.c0, table.stickyt td.c0{ position:sticky; left:0; z-index:1; background:var(--card); }
+table.stickyt thead th.c0{ z-index:3; }
+table.stickyt tr.rowlink:hover td.c0{ background:#eef4ff; }
+.canalh{ color:var(--accent) !important; }
+td.canalc{ background:rgba(30,99,230,.035); }

@@ -18,6 +18,9 @@ Deno.serve(async (req) => {
       case "mover_stock":        return json(await moverStock(db, payload, actor));
       case "confirmar_ingreso":  return json(await confirmarIngreso(db, payload, actor));
       case "cargar_devolucion":  return json(await cargarDevolucion(db, payload, actor));
+      case "clasificar_devolucion": return json(await clasificarDevolucion(db, payload, actor));
+      case "generar_remito_devolucion": return json(await generarRemitoDevolucion(db, payload, actor));
+      case "decidir_item_devolucion": return json(await decidirItemDevolucion(db, payload, actor));
       case "recibir_devolucion": return json(await recibirDevolucion(db, payload, actor));
       case "decidir_devolucion": return json(await decidirDevolucion(db, payload, actor));
       case "baja_producto":      return json(await bajaProducto(db, payload, actor));
@@ -138,28 +141,143 @@ async function confirmarIngreso(db: DB, p: Record<string, unknown>, actor: strin
   return { ok: true, remito, alta: confirmados.length, productos_nuevos: creados };
 }
 
+// Devuelve el depósito de retiro según el canal: ML Full → Genpol,
+// Flex / Tienda Nube → Flexit. Se puede forzar con deposito_retiro (código).
+async function depositoRetiro(db: DB, canal: string | null, codigoForzado?: string | null) {
+  const codigo = codigoForzado ?? (canal === "ML" || canal === "ml_full" ? "GEN" : "FLX");
+  const { data } = await db.from("depositos").select("id, codigo").eq("codigo", codigo).maybeSingle();
+  return data ?? null;
+}
+
+// Resuelve producto_id a partir de un SKU (para los ítems que trae ML/manual).
+async function productoPorSku(db: DB, sku?: string | null): Promise<string | null> {
+  if (!sku) return null;
+  const { data } = await db.from("productos").select("id").ilike("sku", String(sku).trim()).maybeSingle();
+  return data?.id ?? null;
+}
+
+// Carga MANUAL de una devolución (Tienda Nube o cualquier caso sin API).
+// Entra directo en 'por_retirar' clasificada por depósito, con sus SKUs reales.
+// Payload: { canal, venta_ref?, motivo?, foto_url?, deposito_retiro? (GEN|FLX),
+//            items: [{ sku, producto_id?, cantidad }] }
 async function cargarDevolucion(db: DB, p: Record<string, unknown>, actor: string) {
-  const { data: ofi } = await db.from("depositos").select("id").eq("codigo", "OFI").single();
+  const canal = (p.canal as string) ?? null;
+  const dep = await depositoRetiro(db, canal, (p.deposito_retiro as string) ?? null);
+  const itemsIn = ((p.items as Record<string, unknown>[]) ?? []).filter((i) => Number(i.cantidad) > 0);
+  if (!itemsIn.length) throw new Error("la devolución no tiene ítems");
+
+  const totalUnidades = itemsIn.reduce((a, i) => a + Number(i.cantidad), 0);
   const { data: dev, error } = await db.from("devoluciones").insert({
-    producto_id: (p.producto_id as string) ?? null,
-    sku: (p.sku as string) ?? null,
-    cantidad: Number(p.cantidad ?? 1),
-    canal: (p.canal as string) ?? null,
+    origen: "manual",
+    sku: itemsIn.length === 1 ? (itemsIn[0].sku as string) ?? null : null,
+    producto_id: null,
+    cantidad: totalUnidades,
+    canal,
     venta_ref: (p.venta_ref as string) ?? null,
     motivo: (p.motivo as string) ?? null,
     foto_url: (p.foto_url as string) ?? null,
-    deposito_origen_id: (p.deposito_origen_id as string) ?? null,
-    deposito_destino_id: ofi?.id ?? null,
-    estado: "retiro_generado",
+    deposito_retiro_id: dep?.id ?? null,
+    estado: "por_retirar",
   }).select().single();
   if (error) throw error;
+
+  for (const it of itemsIn) {
+    const pid = (it.producto_id as string) ?? await productoPorSku(db, it.sku as string);
+    await db.from("devolucion_items").insert({
+      devolucion_id: dev.id, sku: (it.sku as string) ?? null,
+      producto_id: pid, cantidad: Number(it.cantidad),
+    });
+  }
+  await audit(db, "devolucion", dev.id, "por_retirar", { origen: "manual", items: itemsIn.length }, actor);
+  return { ok: true, devolucion: dev };
+}
+
+// Clasifica (o reclasifica) de qué depósito se retira: GEN o FLX.
+async function clasificarDevolucion(db: DB, p: Record<string, unknown>, actor: string) {
+  const id = String(p.devolucion_id);
+  const dep = await depositoRetiro(db, null, String(p.deposito_retiro));
+  if (!dep) throw new Error("depósito de retiro inválido (usar GEN o FLX)");
+  const { data: dev } = await db.from("devoluciones").select("estado").eq("id", id).single();
+  const patch: Record<string, unknown> = { deposito_retiro_id: dep.id };
+  // Si venía 'en proceso' (ML), clasificar también la habilita para retirar.
+  if (dev?.estado === "en_proceso") patch.estado = "por_retirar";
+  await db.from("devoluciones").update(patch).eq("id", id);
+  await audit(db, "devolucion", id, "clasificada", { deposito: dep.codigo }, actor);
+  return { ok: true };
+}
+
+// Genera el remito de retiro usando los SKUs reales de la devolución.
+// La mercadería se retira de GEN/FLX y entra a Oficina (queda a revisar).
+async function generarRemitoDevolucion(db: DB, p: Record<string, unknown>, actor: string) {
+  const id = String(p.devolucion_id);
+  const { data: dev } = await db.from("devoluciones").select("*").eq("id", id).single();
+  if (!dev) throw new Error("devolución no encontrada");
+  if (dev.estado !== "por_retirar") throw new Error("la devolución no está lista para retirar");
+  if (!dev.deposito_retiro_id) throw new Error("clasificá primero de qué depósito se retira (Genpol o Flexit)");
+
+  const { data: ofi } = await db.from("depositos").select("id").eq("codigo", "OFI").single();
+  const { data: items } = await db.from("devolucion_items").select("*").eq("devolucion_id", id);
+  const conProducto = (items ?? []).filter((i) => i.producto_id);
+
+  // La mercadería devuelta ingresa físicamente a Oficina (aún sin decidir).
+  for (const it of conProducto) {
+    await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: ofi!.id, p_delta: it.cantidad });
+    await enqueueAjuste(db, it.producto_id, ofi!.id, it.cantidad, "Devolución retirada a Oficina");
+  }
   const remito = await crearRemito(
-    db, "devolucion_retiro", (p.deposito_origen_id as string) ?? null, ofi?.id ?? null,
-    dev.producto_id ? [{ producto_id: dev.producto_id, cantidad: dev.cantidad }] : [],
-    actor, { tabla: "devoluciones", id: dev.id }, "Retiro de devolución",
+    db, "devolucion_retiro", dev.deposito_retiro_id, ofi!.id,
+    conProducto.map((i) => ({ producto_id: i.producto_id as string, cantidad: i.cantidad })),
+    actor, { tabla: "devoluciones", id }, "Retiro de devolución (SKUs reales)",
   );
-  await audit(db, "devolucion", dev.id, "cargada", p, actor);
-  return { ok: true, devolucion: dev, remito };
+  await db.from("devoluciones").update({ estado: "en_oficina", remito_id: remito.id, deposito_destino_id: ofi!.id }).eq("id", id);
+  await audit(db, "devolucion", id, "remito_generado", { remito: remito.id, skus: conProducto.length }, actor);
+  return { ok: true, remito };
+}
+
+// Decide un ítem (SKU) ya en Oficina: apto vuelve al stock, no apto es baja.
+// Cuando todos los ítems están decididos, cierra la devolución.
+async function decidirItemDevolucion(db: DB, p: Record<string, unknown>, actor: string) {
+  const itemId = String(p.item_id);
+  const apta = Boolean(p.apta);
+  const { data: it } = await db.from("devolucion_items").select("*, devoluciones(id)").eq("id", itemId).single();
+  if (!it) throw new Error("ítem no encontrado");
+  const devId = it.devolucion_id;
+  const { data: ofi } = await db.from("depositos").select("id").eq("codigo", "OFI").single();
+
+  if (apta) {
+    // Queda como stock. Si se elige otro depósito, se mueve desde Oficina.
+    const destino = (p.deposito_destino_id as string) ?? null;
+    if (destino && destino !== ofi!.id && it.producto_id) {
+      await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: ofi!.id, p_delta: -it.cantidad });
+      await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: destino, p_delta: it.cantidad });
+    }
+    await db.from("devolucion_items").update({ apta: true, destino_no_apta: null, valor_perdida: null, decidido_por: actor, decidido_at: new Date().toISOString() }).eq("id", itemId);
+  } else {
+    // Baja del stock (sale de Oficina) + pérdida valorizada al costo.
+    let perdida: number | null = (p.valor_perdida as number) ?? null;
+    if (it.producto_id) {
+      await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: ofi!.id, p_delta: -it.cantidad });
+      await enqueueAjuste(db, it.producto_id, ofi!.id, -it.cantidad, "Baja por devolución no apta");
+      if (perdida == null) {
+        const { data: prod } = await db.from("productos").select("costo").eq("id", it.producto_id).single();
+        if (prod?.costo != null) perdida = Number(prod.costo) * Number(it.cantidad);
+      }
+    }
+    await db.from("devolucion_items").update({ apta: false, destino_no_apta: (p.destino_no_apta as string) ?? "tirar", valor_perdida: perdida, decidido_por: actor, decidido_at: new Date().toISOString() }).eq("id", itemId);
+  }
+
+  // ¿Ya están todos los ítems decididos? Cerrar la cabecera.
+  const { data: all } = await db.from("devolucion_items").select("apta, valor_perdida").eq("devolucion_id", devId);
+  const pendientes = (all ?? []).filter((x) => x.apta === null).length;
+  if (pendientes === 0) {
+    const aptos = (all ?? []).filter((x) => x.apta === true).length;
+    const noAptos = (all ?? []).filter((x) => x.apta === false).length;
+    const estado = aptos && noAptos ? "parcial" : aptos ? "apta" : "no_apta";
+    const perdidaTotal = (all ?? []).reduce((a, x) => a + (Number(x.valor_perdida) || 0), 0);
+    await db.from("devoluciones").update({ estado, valor_perdida: perdidaTotal || null, decidido_por: actor }).eq("id", devId);
+    await audit(db, "devolucion", devId, estado, { aptos, noAptos }, actor);
+  }
+  return { ok: true };
 }
 
 // Marca que la devolución llegó a la oficina (lista para revisar).

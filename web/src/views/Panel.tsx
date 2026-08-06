@@ -6,30 +6,19 @@ import { ProductoDetalle } from "./ProductoDetalle.tsx";
 const ESTADO_LABEL: Record<string, string> = { ok: "OK", reponer: "reponer", sin_stock: "sin stock" };
 const TIPO_LABEL: Record<string, string> = { C: "combo", V: "variante" };
 
-// Columnas reagrupadas por depósito ↔ canal de venta:
-//   Genpol · [Full ↔ ML Full] · [Flexit ↔ ML Flex / Tienda Nube] · Oficina
-type Col = { key: string; kind: "dep" | "canal"; label: string };
-const COLS: Col[] = [
-  { key: "GEN", kind: "dep", label: "Genpol" },
-  { key: "FULL", kind: "dep", label: "Full" },
-  { key: "ml_full", kind: "canal", label: "ML Full" },
-  { key: "FLX", kind: "dep", label: "Flexit" },
-  { key: "ml_flex", kind: "canal", label: "ML Flex" },
-  { key: "tn", kind: "canal", label: "T. Nube" },
-  { key: "OFI", kind: "dep", label: "Oficina" },
-];
+// Disponible real de Flexit = físico − reservado (unidades ya comprometidas por ventas en curso).
+const dispFLX = (s: StockConsolidado) => (s.por_deposito.FLX ?? 0) - (s.reservas?.FLX ?? 0);
 
-// Reconciliación físico ↔ publicado.
-//  · Full: bodega de Mercado Libre. · Flexit: pool físico que abastece ML Flex + Tienda Nube.
-// Sobreventa: ML Flex o Tienda Nube ofertan más que el físico en Flexit.
+// Reconciliación del pool Flexit (el único con riesgo real de sobreventa:
+// ML Flex y Tienda Nube comparten el mismo físico). Full lo maneja ML aparte.
 type Pub = "sincronizado" | "sobreventa" | "desync" | "sin_publicar" | "na";
 function reconciliar(s: StockConsolidado): Pub {
-  const pool = s.por_deposito.FLX ?? 0;
+  const disp = dispFLX(s);
   const pubFlex = s.por_canal.ml_flex ?? 0;
   const pubTN = s.por_canal.tn ?? 0;
   const pubFull = s.por_canal.ml_full ?? 0;
   if (pubFull + pubFlex + pubTN === 0) return s.total > 0 ? "sin_publicar" : "na";
-  if (pubFlex > pool || pubTN > pool) return "sobreventa";
+  if (pubFlex > disp || pubTN > disp) return "sobreventa";
   if (pubFlex > 0 && pubTN > 0 && pubFlex !== pubTN) return "desync";
   return "sincronizado";
 }
@@ -67,6 +56,15 @@ function MultiSelect({ label, options, sel, setSel }: {
         </>
       )}
     </div>
+  );
+}
+
+// Celda de depósito físico (número, rojo si negativo).
+function DepCell({ v, muted, cls }: { v: number; muted?: boolean; cls?: string }) {
+  return (
+    <td className={"tnum " + (cls ?? "")} style={{ textAlign: "right", color: v < 0 ? "var(--bad)" : v === 0 || muted ? "var(--ink-faint)" : undefined }}>
+      {v}
+    </td>
   );
 }
 
@@ -117,7 +115,8 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
   function valor(s: StockConsolidado, key: string): number | string {
     if (key === "sku") return s.sku.toLowerCase();
     if (key === "total") return s.total;
-    if (["GEN", "FULL", "FLX", "OFI"].includes(key)) return s.por_deposito[key] ?? 0;
+    if (key === "FLX") return dispFLX(s);
+    if (["GEN", "FULL", "OFI"].includes(key)) return s.por_deposito[key] ?? 0;
     return s.por_canal[key] ?? 0;
   }
   function valorOrden({ s, pub }: { s: StockConsolidado; pub: Pub }): string | number {
@@ -133,7 +132,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
       if (!verInactivos && !s.activo) return false;
       if (term && !`${s.sku} ${s.nombre}`.toLowerCase().includes(term)) return false;
       if (estadoSel.size && !estadoSel.has(s.estado)) return false;
-      if (depSel.size && ![...depSel].some((d) => (s.por_deposito[d] ?? 0) > 0)) return false;
+      if (depSel.size && ![...depSel].some((dcode) => (s.por_deposito[dcode] ?? 0) !== 0)) return false;
       if (pubSel.size && !pubSel.has(pub)) return false;
       if (soloProblemas && !(pub === "sobreventa" || pub === "desync" || pub === "sin_publicar")) return false;
       return true;
@@ -155,7 +154,7 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
   return (
     <div className="stack">
       <div className="section-head">
-        <div><span className="eyebrow">Panel</span><h2>Stock y publicaciones</h2></div>
+        <div><span className="eyebrow">Panel</span><h2>Stock por depósito y publicaciones</h2></div>
         <div className="between" style={{ gap: 12 }}>
           <span className="muted">{lastSync ? "Actualizado " + new Date(lastSync).toLocaleString("es-AR") : "Sin sincronizar"}</span>
           <button className="btn" onClick={sync} disabled={syncing}>{syncing ? "Sincronizando…" : "↻ Sincronizar"}</button>
@@ -167,6 +166,15 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         <div className="tile okv"><b className="tnum">{totalUnidades}</b><span>Unidades en stock</span></div>
         <div className={"tile" + (sobreventa ? " alert" : "")}><b className="tnum">{sobreventa}</b><span>Riesgo de sobreventa</span></div>
         <div className={"tile" + (porReponer ? " warnv" : "")}><b className="tnum">{porReponer}</b><span>Por reponer</span></div>
+      </div>
+
+      {/* Leyenda de la relación depósito → canal */}
+      <div className="rel-legend">
+        <span className="rl-item"><b className="dep">Full</b> <span className="arw">→</span> <b className="can">ML Full</b></span>
+        <span className="rl-sep">·</span>
+        <span className="rl-item"><b className="dep">Flexit</b> <small>(disponible)</small> <span className="arw">→</span> <b className="can">ML Flex</b> + <b className="can">Tienda Nube</b></span>
+        <span className="rl-sep">·</span>
+        <span className="rl-item"><b className="dep">Genpol</b> / <b className="dep">Oficina</b> = respaldo (no publicado)</span>
       </div>
 
       <div className="filters">
@@ -184,23 +192,25 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
 
       <div className="card">
         <div className="tbl-scroll">
-          <table className="tbl grouped stickyt">
+          <table className="tbl grouped stickyt poolt">
             <thead>
               <tr className="grp">
                 <th className="c0"></th>
-                <th className="gdep">Genpol</th>
-                <th className="gpub divl" colSpan={2}>Mercado Libre Full</th>
-                <th className="gpub divl" colSpan={3}>Flexit → ML Flex / Tienda Nube</th>
-                <th className="gdep divl">Oficina</th>
+                <th className="gpool full divl" colSpan={2}>Full → ML Full</th>
+                <th className="gpool flex divl" colSpan={3}>Flexit → ML Flex · Tienda Nube</th>
+                <th className="gpool resp divl" colSpan={2}>Respaldo</th>
                 <th className="divl"></th>
                 <th></th>
               </tr>
               <tr className="cols">
                 <th className="c0 sortable" onClick={() => ordenar("sku")}>Producto{flechita("sku")}</th>
-                {COLS.map((c, i) => (
-                  <th key={c.key} className={"sortable" + ([1, 3, 6].includes(i) ? " divl" : "") + (c.kind === "canal" ? " canalh" : "")}
-                    style={{ textAlign: "right" }} onClick={() => ordenar(c.key)}>{c.label}{flechita(c.key)}</th>
-                ))}
+                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("FULL")}>Depósito{flechita("FULL")}</th>
+                <th className="sortable canalh" style={{ textAlign: "right" }} onClick={() => ordenar("ml_full")}>ML Full{flechita("ml_full")}</th>
+                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("FLX")}>Disponible{flechita("FLX")}</th>
+                <th className="sortable canalh" style={{ textAlign: "right" }} onClick={() => ordenar("ml_flex")}>ML Flex{flechita("ml_flex")}</th>
+                <th className="sortable canalh" style={{ textAlign: "right" }} onClick={() => ordenar("tn")}>T. Nube{flechita("tn")}</th>
+                <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("GEN")}>Genpol{flechita("GEN")}</th>
+                <th className="sortable" style={{ textAlign: "right" }} onClick={() => ordenar("OFI")}>Oficina{flechita("OFI")}</th>
                 <th className="sortable divl" style={{ textAlign: "right" }} onClick={() => ordenar("total")}>Total{flechita("total")}</th>
                 <th className="sortable" onClick={() => ordenar("pub")}>Publicación{flechita("pub")}</th>
               </tr>
@@ -209,7 +219,16 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
               {loading && <tr><td colSpan={10} className="empty">Cargando…</td></tr>}
               {!loading && filtrado.length === 0 && <tr><td colSpan={10} className="empty">Sin resultados.</td></tr>}
               {filtrado.map(({ s, pub }) => {
-                const pool = s.por_deposito.FLX ?? 0;
+                const disp = dispFLX(s);
+                const resFLX = s.reservas?.FLX ?? 0;
+                const mlFull = s.por_canal.ml_full;
+                const mlFlex = s.por_canal.ml_flex;
+                const tn = s.por_canal.tn;
+                const overFlex = (mlFlex ?? 0) > disp;
+                const overTN = (tn ?? 0) > disp;
+                const canalCell = (v: number | undefined, over: boolean) => (
+                  <td className="tnum mono canalc" style={{ textAlign: "right", fontWeight: over ? 700 : undefined, color: over ? "var(--bad)" : (v == null ? "var(--ink-faint)" : undefined) }}>{v ?? "—"}</td>
+                );
                 return (
                   <tr key={s.producto_id} className="rowlink" style={{ opacity: s.activo ? 1 : 0.55 }} onClick={() => setSel(s)}>
                     <td className="sku c0">
@@ -219,17 +238,19 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
                       {s.estado !== "ok" && <span className={"badge " + s.estado} style={{ marginLeft: 8 }}>{ESTADO_LABEL[s.estado]}</span>}
                       <small>{s.nombre}</small>
                     </td>
-                    {COLS.map((c, i) => {
-                      const divl = [1, 3, 6].includes(i) ? " divl" : "";
-                      if (c.kind === "dep") {
-                        const v = s.por_deposito[c.key] ?? 0;
-                        return <td key={c.key} className={"tnum" + divl} style={{ textAlign: "right", color: v < 0 ? "var(--danger,#d64545)" : v === 0 ? "var(--ink-faint)" : undefined }}>{v}</td>;
-                      }
-                      const v = s.por_canal[c.key];
-                      const over = c.key !== "ml_full" && (v ?? 0) > pool;
-                      return <td key={c.key} className={"tnum mono canalc" + divl}
-                        style={{ textAlign: "right", fontWeight: over ? 700 : undefined, color: over ? "var(--danger,#d64545)" : (v == null ? "var(--ink-faint)" : undefined) }}>{v ?? "—"}</td>;
-                    })}
+                    {/* Full → ML Full */}
+                    <DepCell v={s.por_deposito.FULL ?? 0} cls="divl" />
+                    {canalCell(mlFull, false)}
+                    {/* Flexit disponible → ML Flex · TN */}
+                    <td className="tnum divl" style={{ textAlign: "right", color: disp < 0 ? "var(--bad)" : disp === 0 ? "var(--ink-faint)" : undefined }}>
+                      {disp}{resFLX > 0 && <small className="res">−{resFLX} res</small>}
+                    </td>
+                    {canalCell(mlFlex, overFlex)}
+                    {canalCell(tn, overTN)}
+                    {/* Respaldo */}
+                    <DepCell v={s.por_deposito.GEN ?? 0} muted cls="divl" />
+                    <DepCell v={s.por_deposito.OFI ?? 0} muted />
+                    {/* Total + estado */}
                     <td className="tnum mono divl" style={{ textAlign: "right", fontWeight: 700 }}>{s.total}</td>
                     <td><span className={"badge " + PUB_UI[pub].cls}>{PUB_UI[pub].label}</span></td>
                   </tr>
@@ -240,9 +261,10 @@ export function Panel({ notify }: { notify: (m: string) => void }) {
         </div>
       </div>
       <p className="muted" style={{ fontSize: ".82rem" }}>
-        Cada depósito se muestra con su canal de venta: <b>Full</b> abastece <b>ML Full</b>; <b>Flexit</b> es el pool que
-        abastece <b>ML Flex</b> y <b>Tienda Nube</b>. <b>⚠ Sobreventa</b> = un canal oferta más que el físico en Flexit (celda en rojo).
-        Clic en un producto para ver el detalle y setear su mínimo.
+        <b>Disponible</b> de Flexit = físico − reservado (unidades ya comprometidas por ventas en curso). <b>ML Flex</b> y
+        <b> Tienda Nube</b> comparten ese pool: si alguno oferta más que el disponible, la celda se marca en rojo
+        (<b>⚠ sobreventa</b>). Los números salen de Contabilium (depósitos) y de la API de Mercado Libre (publicado);
+        el <b>Full</b> puede verse en rojo si Contabilium está desincronizado. Clic en un producto para el detalle.
       </p>
 
       {sel && (

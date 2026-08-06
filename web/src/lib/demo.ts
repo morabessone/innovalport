@@ -31,7 +31,9 @@ const remitos: Remito[] = [
 const devoluciones: Devolucion[] = [
   { id: "dev1", sku: "CAM-WIFI-PORT", producto_id: "p4", cantidad: 1, canal: "ML",
     venta_ref: "2000004512345", motivo: "No configura wifi", estado: "en_oficina",
-    valor_perdida: null, destino_no_apta: null, foto_url: null, created_at: hoursAgo(20) },
+    origen: "ml_api", deposito_retiro_id: null, entregada_at: hoursAgo(24),
+    valor_perdida: null, destino_no_apta: null, foto_url: null, created_at: hoursAgo(20),
+    items: [{ id: "di1", devolucion_id: "dev1", sku: "CAM-WIFI-PORT", producto_id: "p4", cantidad: 1, apta: null, destino_no_apta: null, valor_perdida: null }] },
 ];
 function mkRemito(tipo: string, origen: string | null, destino: string | null, nota: string): Remito {
   return {
@@ -62,6 +64,7 @@ export const demo = {
         producto_id: p.producto_id, sku: p.sku, nombre: p.nombre,
         tipo: "P", costo: 0,
         stock_minimo: p.stock_minimo, por_deposito: { ...p.por }, total,
+        reservas: {},
         por_canal: { ml_full: pubFull, ml_flex: pubFlex },
         estado: estadoDe(total, p.stock_minimo),
         activo: p.activo !== false,
@@ -134,16 +137,21 @@ export const demo = {
     remitos.push(mkRemito("ingreso", null, destino, "Ingreso por factura"));
   },
 
-  cargarDevolucion(d: Partial<Devolucion> & { deposito_origen_id?: string }) {
+  cargarDevolucion(d: Partial<Devolucion> & { deposito_retiro?: string; items?: { sku?: string; producto_id?: string; cantidad: number }[] }) {
+    const id = "dev" + Math.random().toString(36).slice(2, 7);
+    const items = (d.items ?? []).map((it, i) => ({
+      id: id + "-i" + i, devolucion_id: id, sku: it.sku ?? null, producto_id: it.producto_id ?? null,
+      cantidad: it.cantidad, apta: null, destino_no_apta: null, valor_perdida: null,
+    }));
     const dev: Devolucion = {
-      id: "dev" + Math.random().toString(36).slice(2, 7),
-      sku: d.sku ?? null, producto_id: d.producto_id ?? null, cantidad: d.cantidad ?? 1,
+      id, sku: items.length === 1 ? items[0].sku : null, producto_id: null,
+      cantidad: items.reduce((a, i) => a + i.cantidad, 1 - (items.length ? 1 : 0)) || 1,
       canal: d.canal ?? null, venta_ref: d.venta_ref ?? null, motivo: d.motivo ?? null,
-      estado: "retiro_generado", valor_perdida: null, destino_no_apta: null, foto_url: null,
-      created_at: new Date().toISOString(),
+      estado: "por_retirar", origen: "manual", deposito_retiro_id: null, entregada_at: null,
+      valor_perdida: null, destino_no_apta: null, foto_url: null,
+      created_at: new Date().toISOString(), items,
     };
     devoluciones.push(dev);
-    remitos.push(mkRemito("devolucion_retiro", d.deposito_origen_id ?? null, "d-ofi", "Retiro de devolución"));
   },
 
   decidirDevolucion(id: string, apta: boolean, destino?: string, valor?: number) {

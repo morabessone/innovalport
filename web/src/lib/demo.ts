@@ -64,6 +64,7 @@ export const demo = {
         producto_id: p.producto_id, sku: p.sku, nombre: p.nombre,
         tipo: "P", costo: 0,
         stock_minimo: p.stock_minimo, por_deposito: { ...p.por }, total,
+        reservas: {},
         por_canal: { ml_full: pubFull, ml_flex: pubFlex },
         estado: estadoDe(total, p.stock_minimo),
         activo: p.activo !== false,

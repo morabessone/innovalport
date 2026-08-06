@@ -16,6 +16,7 @@ export interface StockConsolidado {
   stock_minimo: number;
   total: number;
   por_deposito: Record<string, number>;  // GEN, FULL, FLX, OFI
+  reservas: Record<string, number>;       // unidades reservadas por depósito (Contabilium)
   por_canal: Record<string, number>;      // ml_full, ml_flex, tn
   estado: EstadoStock;
   activo: boolean;

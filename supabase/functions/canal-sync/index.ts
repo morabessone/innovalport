@@ -108,14 +108,9 @@ Deno.serve(async (req) => {
     }
     if (rows.length) await d.from("canal_stock").upsert(rows, { onConflict: "producto_id,canal" });
 
-    const { data: depFull } = await d.from("depositos").select("id").eq("codigo", "FULL").single();
-    if (depFull) {
-      const now = new Date().toISOString();
-      for (const [sku, f] of full) {
-        const pid = bySku.get(sku); if (!pid) continue;
-        await d.from("stock").upsert({ producto_id: pid, deposito_id: depFull.id, cantidad: f, updated_at: now }, { onConflict: "producto_id,deposito_id" });
-      }
-    }
+    // Nota: el depósito físico FULL lo escribe deposito-sync desde Contabilium
+    // (para ver el número real de la contabilidad, negativos incluidos). Acá
+    // solo se registra lo PUBLICADO en ML (canal_stock ml_full / ml_flex).
 
     const now = new Date().toISOString();
     await d.from("canal_config").update({ meta: { ultima_sync: now, items: ids.length, user_products: upToSku.size, up_err: upErr, sin_producto: [...sinProducto] } }).eq("tipo", "ml");

@@ -74,39 +74,49 @@ Parcialmente, y conviene aprovecharlo:
 - ❌ **Empujar stock a canales / prevenir sobreventa automáticamente**: hoy no,
   porque `SincronizaStock=false`.
 
-## 4. La sobreventa: por qué pasa y cómo cerrarla
+## 4. Decisión adoptada: la app da VISIBILIDAD, no escribe a los canales
 
-Hoy, si se vende 1 unidad por ML Flex, ML baja su propio pool; pero **Tienda
-Nube no se entera automáticamente** (Contabilium no empuja). Ese es el hueco.
+No hace falta empujar stock a ML/TN automáticamente ni activar `SincronizaStock`.
+El modelo elegido es más simple y de menor riesgo:
 
-Para cerrarlo hay dos caminos, ambos implican **escritura** (hoy en pausa):
+- **Contabilium es la fuente de verdad** del stock por SKU y depósito. Ya
+  descuenta cada venta y maneja **combos y cuotas**, así que ese número es real.
+- **La app lee** ese stock (todos los depósitos) + lo **publicado** por canal
+  (ML por API) y lo muestra junto, por SKU, con el **disponible** (físico −
+  reservado) y una **alerta de sobreventa** cuando un canal oferta más que el
+  disponible del pool Flexit.
+- Con esa visibilidad, **las personas** deciden qué publicar o cuánto mandar a
+  cada depósito. La app no toca las publicaciones.
 
-1. **Activar `SincronizaStock` en el panel de Contabilium** para que Contabilium
-   empuje stock a ML y TN. Es "no reinventar la rueda", pero hay que:
-   - Verificar en el panel que la integración de stock exista y funcione bien.
-   - Probar en 1–2 SKUs que al vender por un canal baje en el otro.
-   - Riesgo: si Contabilium empuja el número equivocado (ej. el Full negativo),
-     rompe publicaciones. Requiere que el stock por depósito esté sano primero.
+Residual honesto: al ser visibilidad (no bloqueo), una venta entre dos vistas
+podría dejar por segundos una publicación por encima del disponible; la alerta lo
+marca enseguida para corregir a mano. Es el trade-off aceptado a cambio de no
+escribir nada automático.
 
-2. **Que la app sea la autoridad**: al detectar una venta (feed de comprobantes
-   + webhooks de TN), recalcular el pool por SKU y escribir el stock corregido a
-   ML por API (y avisar el ajuste de TN). Más control, pero es lógica propia.
+### El único write (a futuro, cuando se habilite)
+El **conteo inicial**: cuando arranquen a usar la app y cuenten físicamente, ese
+número se escribe **a Contabilium** (por SKU y depósito) para dejar el stock 100%
+real. De ahí en más, Contabilium lo mantiene con ventas / movimientos /
+devoluciones. Ese write sigue **apagado** hasta que se avise.
 
-**Recomendación**: intentar primero el camino 1 (Contabilium), porque es su
-función natural y evita lógica paralela — pero **solo después** de tener el stock
-por depósito sano (Full desde ML, no desde el Full negativo de Contabilium), y
-probándolo en pocos SKUs. Si Contabilium no sincroniza bien, recién ahí pasar al
-camino 2.
+> Importante: escribir el conteo a Contabilium deja el **depósito** correcto,
+> pero **no** sincroniza solo las publicaciones (porque `SincronizaStock=false`).
+> Las publicaciones se ajustan a mano mirando la app, o —si más adelante se
+> quiere automático— habría que activar la sincronización de Contabilium o que la
+> app escriba a los canales. Hoy: ninguna de las dos.
 
-Mientras tanto (solo lectura), la app **detecta** el riesgo: marca en rojo cuando
-`ML Flex` o `TN` publicado supera el disponible real del pool Flexit
-(`StockConReservas`).
+## 5. Estado de implementación (todo lectura)
 
-## 5. Próximo paso propuesto (cuando se decida)
-
-1. Migrar la fuente de stock por depósito (Genpol, Flexit, Oficina) a
-   `getStockByDeposito` — lectura directa de Contabilium, reemplaza exports.
-2. Mantener Full desde la API de ML.
-3. Sumar `StockReservado` a la vista para mostrar disponible real.
-4. Recién con eso sano, evaluar prender la sincronización hacia canales
-   (Contabilium primero; app como plan B).
+- ✅ `deposito-sync`: trae stock por SKU y depósito desde Contabilium
+  (`getStockByDeposito`, paginado con `page`) para Genpol, Flexit, Oficina y Full.
+  Escribe solo en la tabla `stock` de la app (cantidad + reservado). Cron cada
+  30 min. Reemplaza los exports manuales de depósitos.
+- ✅ `canal-sync`: publicado en ML (ML Full / ML Flex) por API. Ya no pisa el
+  depósito Full (ese lo trae `deposito-sync` desde Contabilium, negativos
+  incluidos, para corregir).
+- ✅ Panel: por SKU muestra `Full → ML Full`, `Flexit (disponible, −reservado) →
+  ML Flex · Tienda Nube`, respaldo `Genpol / Oficina`, total y alerta de
+  sobreventa (celda en rojo cuando publicado > disponible).
+- ⏳ Pendiente y apagado: conteo inicial → escritura a Contabilium.
+- 🔎 A confirmar con Javier: que las ventas de Tienda Nube en Contabilium
+  descuenten del depósito Flexit (visto en datos, con pocas muestras).

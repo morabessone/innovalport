@@ -270,6 +270,19 @@ input, select { font-family: inherit; }
 .seg:hover { border-color: var(--accent); }
 .seg.on { background: var(--accent-wash); border-color: var(--accent); color: var(--accent-deep); }
 
+/* Panel v3: relación depósito → canal por "pool" */
+.rel-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .82rem; color: var(--ink-soft); padding: 2px 2px 0; }
+.rel-legend .dep { color: var(--cyan); }
+.rel-legend .can { color: var(--accent); }
+.rel-legend .arw { color: var(--ink-faint); }
+.rel-legend small { color: var(--ink-faint); }
+.rel-legend .rl-sep { color: var(--line-strong); }
+.tbl.poolt thead .grp th.gpool { font-family: var(--display); font-size: .58rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 800; padding: 8px 8px 3px; text-align: center; border-bottom: 0; background: var(--card); }
+.tbl.poolt thead .grp th.gpool.full { color: var(--accent); }
+.tbl.poolt thead .grp th.gpool.flex { color: var(--cyan); }
+.tbl.poolt thead .grp th.gpool.resp { color: var(--ink-faint); }
+.tbl.poolt td small.res { display: block; font-family: var(--sans); font-size: .68rem; color: var(--warn); font-weight: 600; margin-top: 1px; }
+
 /* Timeline historial */
 .timeline { list-style: none; margin: 0; padding: 0; }
 .timeline li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }

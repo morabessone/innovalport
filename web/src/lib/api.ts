@@ -59,6 +59,7 @@ export const api = {
         tipo: String(r.tipo ?? "P"), costo: Number(r.costo ?? 0),
         stock_minimo: min, total,
         por_deposito: (r.por_deposito ?? {}) as Record<string, number>,
+        reservas: (r.reservas ?? {}) as Record<string, number>,
         por_canal: (r.por_canal ?? {}) as Record<string, number>,
         activo: Boolean(r.activo),
         estado: total <= 0 ? "sin_stock" : total <= min ? "reponer" : "ok",

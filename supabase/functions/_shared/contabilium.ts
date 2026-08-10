@@ -23,7 +23,7 @@ const EP = {
   token: Deno.env.get("CB_EP_TOKEN") ?? "/token",
   productos: Deno.env.get("CB_EP_PRODUCTOS") ?? "/api/productos",          // [VERIFICAR] paginado
   productoStock: Deno.env.get("CB_EP_PRODUCTO_STOCK") ?? "/api/productos/stock", // [VERIFICAR]
-  ajusteStock: Deno.env.get("CB_EP_AJUSTE_STOCK") ?? "/api/stock/ajuste",  // [VERIFICAR]
+  ajusteStock: Deno.env.get("CB_EP_AJUSTE_STOCK") ?? "/api/conceptos/ajustarStock", // confirmado que existe (400 sin body); payload [VERIFICAR]
   remito: Deno.env.get("CB_EP_REMITO") ?? "/api/comprobantes",            // [VERIFICAR] tipo remito
   ncRapida: Deno.env.get("CB_EP_NC_RAPIDA") ?? "/api/comprobantes/anularrapido", // [VERIFICAR]
 };

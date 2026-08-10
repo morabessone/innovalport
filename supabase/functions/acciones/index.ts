@@ -260,11 +260,14 @@ async function decidirItemDevolucion(db: DB, p: Record<string, unknown>, actor: 
   const { data: ofi } = await db.from("depositos").select("id").eq("codigo", "OFI").single();
 
   if (apta) {
-    // Queda como stock. Si se elige otro depósito, se mueve desde Oficina.
+    // Queda como stock. Si se elige otro depósito, se mueve desde Oficina
+    // (traslado = dos ajustes en Contabilium, igual que un movimiento).
     const destino = (p.deposito_destino_id as string) ?? null;
     if (destino && destino !== ofi!.id && it.producto_id) {
       await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: ofi!.id, p_delta: -it.cantidad });
       await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: destino, p_delta: it.cantidad });
+      await enqueueAjuste(db, it.producto_id, ofi!.id, -it.cantidad, "Devolución apta: reubicación desde Oficina");
+      await enqueueAjuste(db, it.producto_id, destino, it.cantidad, "Devolución apta: reubicación a destino");
     }
     await db.from("devolucion_items").update({ apta: true, destino_no_apta: null, valor_perdida: null, decidido_por: actor, decidido_at: new Date().toISOString() }).eq("id", itemId);
   } else {

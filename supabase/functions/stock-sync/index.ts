@@ -1,11 +1,10 @@
 // ============================================================================
-// stock-sync — Fase 1 (solo lectura de Contabilium, riesgo cero)
+// stock-sync — CATÁLOGO desde Contabilium (solo lectura, riesgo cero)
 // ----------------------------------------------------------------------------
-// Contabilium expone el STOCK TOTAL por producto (campo Stock del "concepto"),
-// NO el desglose por depósito (verificado: no hay endpoint de depósitos y el
-// parámetro idDeposito se ignora). Por eso el reparto por depósito lo maneja el
-// Centro de Stock: esta sync trae el catálogo + el total, respeta lo que la app
-// asignó a GEN/FLX/FULL, y deja el remanente en OFI (Oficina = "sin asignar").
+// Mantiene el catálogo de productos (SKU, cb_producto_id, nombre, costo, precio,
+// stock_minimo, activo) desde /api/conceptos/search. YA NO reparte stock por
+// depósito: eso lo trae deposito-sync desde getStockByDeposito (real por
+// depósito), que es la fuente de verdad del stock.
 //
 // Endpoints confirmados:
 //   POST /token                                         (client_credentials)
@@ -17,7 +16,6 @@ import { serviceClient } from "../_shared/supabase.ts";
 const BASE = Deno.env.get("CONTABILIUM_BASE_URL") ?? "https://rest.contabilium.com";
 const CID = Deno.env.get("CONTABILIUM_CLIENT_ID") ?? "";
 const CS = Deno.env.get("CONTABILIUM_CLIENT_SECRET") ?? "";
-const ASIGNABLES = ["GEN", "FLX", "FULL"]; // lo que se asigna explícitamente; OFI = remanente
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -50,12 +48,6 @@ Deno.serve(async (req) => {
   if (pf) return pf;
   const db = serviceClient();
   try {
-    const { data: deps } = await db.from("depositos").select("id, codigo");
-    const byCode: Record<string, string> = {};
-    for (const dp of deps ?? []) byCode[dp.codigo] = dp.id;
-    const ofiId = byCode["OFI"];
-    const asignadosIds = ASIGNABLES.map((c) => byCode[c]).filter(Boolean);
-
     let page = 1, productos = 0, totalPages = 1;
     do {
       const data = await getPage(page);
@@ -65,8 +57,7 @@ Deno.serve(async (req) => {
         if (String(it.Tipo ?? "") !== "Producto") continue;
         const sku = String(it.Codigo ?? "").trim();
         if (!sku) continue;
-        const total = Math.round(Number(it.Stock ?? 0));
-        const { data: prod } = await db.from("productos").upsert({
+        await db.from("productos").upsert({
           sku,
           nombre: String(it.Nombre ?? ""),
           cb_producto_id: String(it.Id ?? ""),
@@ -75,19 +66,12 @@ Deno.serve(async (req) => {
           stock_minimo: Math.round(Number(it.StockMinimo ?? 0)) || 0,
           activo: String(it.Estado ?? "") === "Activo",
           updated_at: new Date().toISOString(),
-        }, { onConflict: "sku" }).select("id").single();
+        }, { onConflict: "sku" });
         productos++;
-        if (prod && ofiId) {
-          const { data: st } = await db.from("stock").select("cantidad, deposito_id").eq("producto_id", prod.id);
-          let placed = 0;
-          for (const row of st ?? []) if (asignadosIds.includes(row.deposito_id)) placed += Number(row.cantidad);
-          await db.from("stock").upsert({
-            producto_id: prod.id,
-            deposito_id: ofiId,
-            cantidad: Math.max(0, total - placed),
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "producto_id,deposito_id" });
-        }
+        // NOTA: stock-sync ya NO reparte stock por depósito. El stock por depósito
+        // lo trae deposito-sync desde Contabilium (getStockByDeposito, real por
+        // depósito). Acá solo se mantiene el CATÁLOGO (SKU, cb_producto_id, costo,
+        // precio, mínimo, activo), que deposito-sync/worker necesitan.
       }
       page++;
       await sleep(350);

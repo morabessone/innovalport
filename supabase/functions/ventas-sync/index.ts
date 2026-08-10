@@ -1,15 +1,11 @@
 // ============================================================================
-// ventas-sync — ingesta las ventas de Contabilium (ML + TN) y refleja el stock
+// ventas-sync — registra las ventas de Contabilium (ML + TN) para el feed
 // ----------------------------------------------------------------------------
-// Contabilium unifica las ventas de ML y TN como comprobantes. Cada uno trae
-// Origen (canal), Inventario (depósito) e Items (SKU + cantidad). Este job:
-//   1) trae los comprobantes del rango (desde la última sync),
-//   2) por cada factura NUEVA registra la venta (feed) y, si el depósito está
-//      mapeado en cb_inventario_map, baja el stock de ese depósito (expande combos),
-//   3) marca el comprobante para no re-procesarlo.
-// El depósito FULL lo mantiene canal-sync (ML API), así que NO se mapea acá para
-// evitar doble descuento. ?dry=1 devuelve los Inventarios vistos (para mapear).
-// Credenciales de Contabilium: variables de entorno (no en el repo).
+// Contabilium unifica ML y TN como comprobantes (Origen, Inventario, Items).
+// YA NO descuenta stock: Contabilium descuenta el depósito en cada venta y
+// deposito-sync trae ese número real cada 5 min (fuente de verdad única). Acá
+// solo se REGISTRA la venta en cb_ventas (historial / feed). ?dry=1 lista los
+// Inventarios vistos (para mapear). Credenciales por variables de entorno.
 // ============================================================================
 import { createClient } from "jsr:@supabase/supabase-js@2";
 const CB = "https://rest.contabilium.com";
@@ -50,12 +46,8 @@ Deno.serve(async (req) => {
     }
     const { data: invMap } = await d.from("cb_inventario_map").select("inventario_cb, deposito_codigo");
     const inv = new Map<number, string>((invMap ?? []).map((m: any) => [Number(m.inventario_cb), m.deposito_codigo]));
-    const { data: combos } = await d.from("combos").select("combo_sku, base_sku, cantidad");
-    const comboBy = new Map<string, { base: string; cant: number }>((combos ?? []).map((c: any) => [c.combo_sku.toLowerCase(), { base: c.base_sku.toLowerCase(), cant: Number(c.cantidad) }]));
     const { data: deps } = await d.from("depositos").select("id, codigo");
     const depId = new Map<string, string>((deps ?? []).map((x: any) => [x.codigo, x.id]));
-    const { data: prods } = await d.from("productos").select("id, sku");
-    const pid = new Map<string, string>((prods ?? []).map((p: any) => [String(p.sku).toLowerCase(), p.id]));
     const facturas = comps.filter((c) => String(c.TipoFc ?? "").startsWith("FC"));
     if (dry) {
       const seen: Record<number, { inventario: number; origenes: Record<string, number>; ejemplos: string[] }> = {};
@@ -71,7 +63,7 @@ Deno.serve(async (req) => {
     const idset = facturas.map((c) => Number(c.Id));
     const { data: ya } = await d.from("cb_ventas").select("cb_id").in("cb_id", idset.length ? idset : [0]);
     const procesados = new Set((ya ?? []).map((r: any) => Number(r.cb_id)));
-    let aplicadas = 0, sinMapear = 0, sinProducto = 0;
+    let registradas = 0, sinMapear = 0;
     const invSinMapear = new Set<number>();
     for (const c of facturas) {
       const cbId = Number(c.Id);
@@ -82,24 +74,10 @@ Deno.serve(async (req) => {
       const invCb = Number(det.Inventario ?? 0);
       const dep = inv.get(invCb);
       const norm = items.map((it) => ({ sku: String(it.Codigo ?? "").toLowerCase(), cantidad: Number(it.Cantidad ?? 0) }));
-      let aplicado = false;
-      if (dep && depId.has(dep)) {
-        for (const it of norm) {
-          if (!it.sku || it.cantidad <= 0) continue;
-          const combo = comboBy.get(it.sku);
-          const baseSku = combo ? combo.base : it.sku;
-          const qty = combo ? it.cantidad * combo.cant : it.cantidad;
-          const producto = pid.get(baseSku);
-          if (!producto) { sinProducto++; continue; }
-          const dd = depId.get(dep)!;
-          const { data: st } = await d.from("stock").select("cantidad").eq("producto_id", producto).eq("deposito_id", dd).maybeSingle();
-          await d.from("stock").upsert({ producto_id: producto, deposito_id: dd, cantidad: Number(st?.cantidad ?? 0) - qty, updated_at: new Date().toISOString() }, { onConflict: "producto_id,deposito_id" });
-        }
-        aplicado = true; aplicadas++;
-      } else { sinMapear++; if (invCb) invSinMapear.add(invCb); }
-      await d.from("cb_ventas").upsert({ cb_id: cbId, numero: String(det.Numero ?? ""), fecha: det.FechaEmision ?? c.FechaEmision, origen: String(det.Origen ?? c.Origen ?? ""), inventario_cb: invCb, items: norm, aplicado }, { onConflict: "cb_id" });
+      if (dep && depId.has(dep)) registradas++; else { sinMapear++; if (invCb) invSinMapear.add(invCb); }
+      await d.from("cb_ventas").upsert({ cb_id: cbId, numero: String(det.Numero ?? ""), fecha: det.FechaEmision ?? c.FechaEmision, origen: String(det.Origen ?? c.Origen ?? ""), inventario_cb: invCb, items: norm, aplicado: false }, { onConflict: "cb_id" });
     }
     await d.from("sync_estado").upsert({ job: "ventas", ultima_ok: new Date().toISOString() }, { onConflict: "job" });
-    return json({ ok: true, comprobantes: comps.length, facturas: facturas.length, aplicadas, sin_mapear: sinMapear, sin_producto: sinProducto, inv_sin_mapear: [...invSinMapear] });
+    return json({ ok: true, comprobantes: comps.length, facturas: facturas.length, registradas, sin_mapear: sinMapear, inv_sin_mapear: [...invSinMapear] });
   } catch (e) { return json({ ok: false, error: String(e) }, 500); }
 });

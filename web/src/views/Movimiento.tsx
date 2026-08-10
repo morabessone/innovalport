@@ -32,6 +32,7 @@ export function Movimiento({ notify }: { notify: (m: string) => void }) {
   const items = Object.entries(cant).filter(([, q]) => q > 0).map(([producto_id, cantidad]) => ({ producto_id, cantidad }));
   const totalUnidades = items.reduce((a, i) => a + i.cantidad, 0);
   const mismoDeposito = origen === destino;
+  const saleDeOficina = codigoOrigen === "OFI";   // la salida de Oficina no pide remito
 
   function onScan(code: string) {
     setScan(false);
@@ -50,7 +51,9 @@ export function Movimiento({ notify }: { notify: (m: string) => void }) {
     try {
       await api.moverStock(origen, destino, items);
       setCant({}); await load();
-      notify(`Remito generado · ${totalUnidades} u.`);
+      notify(saleDeOficina
+        ? `Movimiento registrado · ${totalUnidades} u. (salida de Oficina, sin remito)`
+        : `Remito generado · ${totalUnidades} u.`);
     } catch (e) { notify("Error: " + (e as Error).message); } finally { setSaving(false); }
   }
 
@@ -67,7 +70,7 @@ export function Movimiento({ notify }: { notify: (m: string) => void }) {
     <div className="stack">
       <div className="section-head">
         <div><span className="eyebrow">Movimiento</span><h2>Mover stock entre depósitos</h2></div>
-        <span className="muted">El remito se genera solo</span>
+        <span className="muted">{saleDeOficina ? "Salida de Oficina · sin remito" : "El remito se genera solo"}</span>
       </div>
 
       <div className="card card-pad">
@@ -114,8 +117,12 @@ export function Movimiento({ notify }: { notify: (m: string) => void }) {
 
         <div className="between" style={{ marginTop: 16 }}>
           <span className="muted">{items.length} producto(s) · {totalUnidades} u.</span>
-          <button className="btn primary" onClick={submit} disabled={saving || mismoDeposito || !items.length}>{saving ? "Generando…" : "Generar remito"}</button>
+          <button className="btn primary" onClick={submit} disabled={saving || mismoDeposito || !items.length}>{saving ? "Registrando…" : saleDeOficina ? "Registrar movimiento" : "Generar remito"}</button>
         </div>
+        <p className="muted" style={{ fontSize: ".78rem", marginTop: 10 }}>
+          El movimiento se refleja en Contabilium como ajuste de stock por depósito (−origen, +destino), la
+          verdad la mantiene Contabilium. La escritura está en pausa: se confirma cuando se habilite.
+        </p>
       </div>
 
       <div className="card">

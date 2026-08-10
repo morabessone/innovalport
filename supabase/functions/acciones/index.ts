@@ -74,13 +74,28 @@ async function moverStock(db: DB, p: Record<string, unknown>, actor: string) {
   const items = (p.items ?? []) as { producto_id: string; cantidad: number }[];
   if (origen === destino) throw new Error("origen y destino no pueden ser el mismo depósito");
   if (!items.length) throw new Error("no hay items para mover");
+
+  // Regla del negocio: la salida de Oficina NO pide remito; el resto sí.
+  const { data: depO } = await db.from("depositos").select("codigo").eq("id", origen).maybeSingle();
+  const saleDeOficina = depO?.codigo === "OFI";
+
   for (const it of items) {
+    // Espejo local (se reconcilia con Contabilium en la próxima sync).
     await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: origen, p_delta: -it.cantidad });
     await db.rpc("ajustar_stock_espejo", { p_producto: it.producto_id, p_deposito: destino, p_delta: it.cantidad });
+    // Contabilium no tiene remito de traslado por API: el movimiento se refleja
+    // como DOS ajustes de stock (−origen, +destino). Interno: el total no cambia.
+    await enqueueAjuste(db, it.producto_id, origen, -it.cantidad, "Traslado entre depósitos");
+    await enqueueAjuste(db, it.producto_id, destino, it.cantidad, "Traslado entre depósitos");
   }
-  const remito = await crearRemito(db, "movimiento", origen, destino, items, actor, undefined, p.nota as string);
-  await audit(db, "remito", remito.id, "movimiento", { origen, destino, items }, actor);
-  return { ok: true, remito };
+
+  // El remito es el documento del retiro físico (lo genera la app), salvo OFI.
+  let remito = null;
+  if (!saleDeOficina) {
+    remito = await crearRemito(db, "movimiento", origen, destino, items, actor, undefined, p.nota as string);
+  }
+  await audit(db, "remito", remito?.id ?? null, "movimiento", { origen, destino, items, remito: !!remito, saleDeOficina }, actor);
+  return { ok: true, remito, remito_generado: !saleDeOficina };
 }
 
 // Ingreso: SUMA stock real -> cambia el total, se encola ajuste a Contabilium.

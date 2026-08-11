@@ -149,34 +149,41 @@ export interface PlanRequest {
   descripcion: string;
 }
 
-// Ajuste de stock en un depósito (delta puede ser + o -). [VERIFICAR]
+// Ajuste de stock en un depósito. CONTRATO CONFIRMADO (sonda con id inexistente):
+//   GET /api/conceptos/ajustarStock?id={concepto}&idDeposito={dep}&cantidad={n}
+// PENDIENTE confirmar con UN test controlado: si `cantidad` es DELTA (suma/resta)
+// o ABSOLUTO (fija el stock). Para el conteo inicial conviene absoluto.
 export function planAjustarStock(
   cbProductoId: string,
   cbDepositoId: string,
-  delta: number,
+  cantidad: number,
   motivo: string,
 ): PlanRequest {
+  const qs = `?id=${encodeURIComponent(cbProductoId)}&idDeposito=${encodeURIComponent(cbDepositoId)}&cantidad=${cantidad}`;
   return {
     base: BASE,
-    endpoint: EP.ajusteStock,
-    method: "POST",
-    body: { idProducto: cbProductoId, idDeposito: cbDepositoId, cantidad: delta, motivo },
-    descripcion: `Ajustar stock ${delta >= 0 ? "+" : ""}${delta} en depósito ${cbDepositoId} del producto ${cbProductoId}`,
+    endpoint: EP.ajusteStock + qs,
+    method: "GET",
+    body: {},
+    descripcion: `Ajustar stock (${cantidad}) en depósito ${cbDepositoId} del concepto ${cbProductoId} — ${motivo}`,
   };
 }
 
-// Alta/baja lógica de un producto en Contabilium. [VERIFICAR endpoint]
+// Alta/baja lógica de un producto. CONFIRMADO (sonda con id inexistente):
+//   GET /api/conceptos/darDeAlta?id={concepto}   (reactivar)
+//   GET /api/conceptos/darDeBaja?id={concepto}   (dar de baja)
 export function planEstadoProducto(
   cbProductoId: string | null,
   sku: string | null,
   activo: boolean,
 ): PlanRequest {
+  const accion = activo ? "darDeAlta" : "darDeBaja";
   return {
     base: BASE,
-    endpoint: EP.productos, // [VERIFICAR] PUT sobre el concepto/producto
-    method: "PUT",
-    body: { id: cbProductoId, sku, activo },
-    descripcion: `${activo ? "Reactivar" : "Dar de baja"} el producto ${sku ?? cbProductoId ?? "(sin id CB)"}`,
+    endpoint: `/api/conceptos/${accion}?id=${encodeURIComponent(cbProductoId ?? "")}`,
+    method: "GET",
+    body: {},
+    descripcion: `${activo ? "Reactivar" : "Dar de baja"} el concepto ${sku ?? cbProductoId ?? "(sin id CB)"}`,
   };
 }
 
@@ -193,11 +200,10 @@ export function planNotaCredito(cbComprobanteId: string): PlanRequest {
 
 // Ejecuta REALMENTE un plan contra Contabilium. Solo se llama en modo real.
 export async function ejecutarPlan(plan: PlanRequest): Promise<unknown> {
-  return callJson(plan.endpoint, {
-    method: plan.method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(plan.body),
-  });
+  const init: RequestInit = { method: plan.method, headers: { "Content-Type": "application/json" } };
+  // GET/HEAD no llevan body (ajustarStock/darDeBaja/darDeAlta van por query-string).
+  if (plan.method !== "GET" && plan.method !== "HEAD") init.body = JSON.stringify(plan.body);
+  return callJson(plan.endpoint, init);
 }
 
 function num(v: unknown): number | undefined {

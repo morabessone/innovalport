@@ -5,21 +5,28 @@
 // YA NO descuenta stock: Contabilium descuenta el depósito en cada venta y
 // deposito-sync trae ese número real cada 5 min (fuente de verdad única). Acá
 // solo se REGISTRA la venta en cb_ventas (historial / feed). ?dry=1 lista los
-// Inventarios vistos (para mapear). Credenciales por variables de entorno.
+// Inventarios vistos (para mapear). Credenciales SIEMPRE de canal_config.
 // ============================================================================
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 const CB = "https://rest.contabilium.com";
-const CID = Deno.env.get("CONTABILIUM_CLIENT_ID") ?? "";
-const CSEC = Deno.env.get("CONTABILIUM_CLIENT_SECRET") ?? "";
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type" };
 function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } }); }
 function db() { return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!); }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function cbToken(): Promise<string> {
-  if (!CID || !CSEC) throw new Error("Faltan CONTABILIUM_CLIENT_ID / CONTABILIUM_CLIENT_SECRET");
-  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: CID, client_secret: CSEC });
+// Contabilium usa OAuth2 client_credentials: client_id = email, client_secret =
+// API Key. Fuente única: canal_config (igual que deposito-sync / stock-sync).
+async function cbToken(d: SupabaseClient): Promise<string> {
+  const { data: cfg } = await d.from("canal_config").select("*").eq("tipo", "contabilium").single();
+  if (!cfg?.client_id || !cfg?.client_secret) throw new Error("Faltan credenciales de Contabilium en canal_config (client_id = email, client_secret = API Key)");
+  const exp = cfg.expires_at ? new Date(cfg.expires_at).getTime() : 0;
+  if (cfg.access_token && exp > Date.now() + 60_000) return cfg.access_token;
+  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: cfg.client_id, client_secret: cfg.client_secret });
   const r = await fetch(CB + "/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-  const t = await r.text(); if (!r.ok) throw new Error("cb token " + r.status); return JSON.parse(t).access_token;
+  const t = await r.text(); if (!r.ok) throw new Error("cb token " + r.status);
+  const j = JSON.parse(t);
+  const ttl = Number(j.expires_in || 3600);
+  await d.from("canal_config").update({ access_token: j.access_token, expires_at: new Date(Date.now() + ttl * 1000).toISOString(), updated_at: new Date().toISOString() }).eq("tipo", "contabilium");
+  return j.access_token;
 }
 async function cbGet(path: string, tok: string) {
   const r = await fetch(CB + path, { headers: { Authorization: "Bearer " + tok, Accept: "application/json" } });
@@ -33,7 +40,7 @@ Deno.serve(async (req) => {
   const d = db();
   const dry = new URL(req.url).searchParams.get("dry") === "1";
   try {
-    const tok = await cbToken();
+    const tok = await cbToken(d);
     const { data: est } = await d.from("sync_estado").select("ultima_ok").eq("job", "ventas").maybeSingle();
     const desde = est?.ultima_ok ? new Date(new Date(est.ultima_ok).getTime() - 12 * 3600_000) : new Date(Date.now() - 3 * 86400_000);
     const hasta = new Date(Date.now() + 86400_000);

@@ -46,27 +46,30 @@ async function audit(db: SupabaseClient, entidad: string, entidad_id: string | n
 
 // ---- inlined _shared/contabilium.ts (escritura, contratos confirmados) ----
 const BASE = Deno.env.get("CONTABILIUM_BASE_URL") ?? "https://rest.contabilium.com";
-const CLIENT_ID = Deno.env.get("CONTABILIUM_CLIENT_ID") ?? "";
-const CLIENT_SECRET = Deno.env.get("CONTABILIUM_CLIENT_SECRET") ?? "";
 const EP = {
   token: "/token",
   ajusteStock: "/api/conceptos/ajustarStock",  // GET ?id=&idDeposito=&cantidad=
   ncRapida: Deno.env.get("CB_EP_NC_RAPIDA") ?? "/api/comprobantes/anularrapido", // [VERIFICAR]
 };
 
-let cachedToken: { value: string; exp: number } | null = null;
+// Credenciales: SIEMPRE de canal_config (fuente única, igual que las demás
+// funciones). Contabilium OAuth2 client_credentials: client_id = email de la
+// cuenta, client_secret = API Key. El handler setea `cfgDb` antes de escribir.
+let cfgDb: SupabaseClient | null = null;
 async function getToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedToken && cachedToken.exp > now + 30_000) return cachedToken.value;
-  if (!CLIENT_ID || !CLIENT_SECRET) throw new Error("Faltan CONTABILIUM_CLIENT_ID / CONTABILIUM_CLIENT_SECRET (email + API Key)");
-  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: CLIENT_ID, client_secret: CLIENT_SECRET });
+  if (!cfgDb) throw new Error("worker: falta el cliente de base para leer canal_config");
+  const { data: cfg } = await cfgDb.from("canal_config").select("*").eq("tipo", "contabilium").single();
+  if (!cfg?.client_id || !cfg?.client_secret) throw new Error("Faltan credenciales de Contabilium en canal_config (client_id = email, client_secret = API Key)");
+  const exp = cfg.expires_at ? new Date(cfg.expires_at).getTime() : 0;
+  if (cfg.access_token && exp > Date.now() + 60_000) return cfg.access_token;
+  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: cfg.client_id, client_secret: cfg.client_secret });
   const res = await fetch(BASE + EP.token, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
   if (!res.ok) throw new Error(`Contabilium token ${res.status}: ${await res.text()}`);
   const data = await res.json();
   const token = data.access_token ?? data.token;
-  const expiresIn = Number(data.expires_in ?? 3600);
   if (!token) throw new Error("Contabilium no devolvió access_token");
-  cachedToken = { value: token, exp: now + expiresIn * 1000 };
+  const ttl = Number(data.expires_in ?? 3600);
+  await cfgDb.from("canal_config").update({ access_token: token, expires_at: new Date(Date.now() + ttl * 1000).toISOString(), updated_at: new Date().toISOString() }).eq("tipo", "contabilium");
   return token;
 }
 
@@ -74,7 +77,11 @@ class RateLimitError extends Error {}
 async function call(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
   const token = await getToken();
   const res = await fetch(BASE + path, { ...init, headers: { ...(init.headers ?? {}), "Authorization": `Bearer ${token}`, "Accept": "application/json" } });
-  if (res.status === 401 && retry) { cachedToken = null; return call(path, init, false); }
+  if (res.status === 401 && retry) {
+    // token vencido/inválido: limpiarlo en canal_config y reintentar una vez.
+    if (cfgDb) await cfgDb.from("canal_config").update({ access_token: null, expires_at: null }).eq("tipo", "contabilium");
+    return call(path, init, false);
+  }
   if (res.status === 429) throw new RateLimitError("Contabilium 429: rate limit alcanzado");
   return res;
 }
@@ -150,6 +157,7 @@ Deno.serve(async (req) => {
   if (pf) return pf;
 
   const db = serviceClient();
+  cfgDb = db;  // habilita getToken() para leer credenciales de canal_config
   let procesados = 0, ok = 0, simulados = 0, errores = 0;
 
   const { data: pendientes } = await db

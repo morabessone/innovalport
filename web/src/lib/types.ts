@@ -33,6 +33,20 @@ export interface Remito {
   created_at: string;
 }
 
+// Alta de producto (para crear COMPLETO en Contabilium desde un Ingreso).
+export interface AltaProducto {
+  sku: string;
+  nombre: string;
+  costo?: number;
+  precio?: number;
+  iva?: number;
+  codigo_barras?: string;
+  codigo_proveedor?: string;
+  id_proveedor_cb?: number | null;
+  descripcion?: string;
+  stock_minimo?: number;
+}
+
 export interface DevolucionItem {
   id: string;
   devolucion_id: string;

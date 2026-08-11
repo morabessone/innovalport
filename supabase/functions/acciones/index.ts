@@ -2,8 +2,31 @@
 // acciones — operaciones de escritura que dispara el panel
 // Cada acción actualiza el espejo local y encola el cambio hacia Contabilium.
 // ============================================================================
-import { preflight, json } from "../_shared/cors.ts";
-import { serviceClient, audit } from "../_shared/supabase.ts";
+// Self-contained (sin imports de _shared) para poder desplegar por MCP sin
+// que se rompa el path relativo. Los helpers van inline abajo.
+import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+};
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+function preflight(req: Request): Response | null {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  return null;
+}
+function serviceClient(): SupabaseClient {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) throw new Error("Faltan SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+async function audit(db: SupabaseClient, entidad: string, entidad_id: string | null, accion: string, detalle: unknown, actor = "sistema"): Promise<void> {
+  try { await db.from("auditoria").insert({ entidad, entidad_id, accion, detalle, actor }); } catch (_e) { /* no frenar */ }
+}
 
 type DB = ReturnType<typeof serviceClient>;
 
@@ -116,11 +139,31 @@ async function resolverProducto(db: DB, it: Record<string, any>, actor: string):
     const { data: padre } = await db.from("productos").select("sku").eq("id", String(nuevo.base_producto_id)).maybeSingle();
     baseSku = padre?.sku ?? null;
   }
+  const costo = Number(nuevo.costo ?? 0) || 0;
+  const precio = nuevo.precio != null ? Number(nuevo.precio) || 0 : null;
   const { data: creado, error } = await db.from("productos").insert({
     sku, nombre, tipo: esVariante ? "V" : "P", activo: true,
-    costo: Number(nuevo.costo ?? 0) || 0, base_sku: baseSku, cb_pendiente: true,
+    costo, precio, base_sku: baseSku,
+    stock_minimo: Math.round(Number(nuevo.stock_minimo ?? 0)) || 0,
+    codigo_barras: (nuevo.codigo_barras as string) ?? null,
+    cb_pendiente: true,
   }).select("id").single();
   if (error) throw new Error(`No se pudo crear ${sku}: ${error.message}`);
+  // Encolar el ALTA COMPLETA en Contabilium (dry-run hasta habilitar escritura).
+  await db.from("cb_queue").insert({
+    accion: "crear_producto",
+    payload: {
+      producto_id: creado.id, sku, nombre,
+      costo, precio: precio ?? undefined,
+      iva: nuevo.iva != null ? Number(nuevo.iva) : undefined,
+      codigo_barras: nuevo.codigo_barras ?? undefined,
+      codigo_proveedor: nuevo.codigo_proveedor ?? undefined,
+      id_proveedor_cb: nuevo.id_proveedor_cb ?? undefined,
+      descripcion: nuevo.descripcion ?? undefined,
+      stock_minimo: nuevo.stock_minimo != null ? Number(nuevo.stock_minimo) : undefined,
+    },
+    ref_tabla: "productos", ref_id: creado.id,
+  });
   await audit(db, "producto", creado.id, esVariante ? "alta_variante" : "alta_nuevo", { sku, nombre, base_sku: baseSku }, actor);
   return String(creado.id);
 }

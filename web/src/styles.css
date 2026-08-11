@@ -200,6 +200,8 @@ input, select { font-family: inherit; }
 .input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 620px) { .row2 { grid-template-columns: 1fr; } }
+label.mini { display: flex; flex-direction: column; gap: 3px; font-size: .72rem; font-weight: 600; color: var(--ink-soft); font-family: var(--display); letter-spacing: .02em; }
+label.mini .input, label.mini .select { padding: 7px 9px; font-size: .85rem; }
 
 /* filtros */
 .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }

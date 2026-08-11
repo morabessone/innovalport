@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
-import type { Deposito, IngresoItem, StockConsolidado } from "../lib/types.ts";
+import type { Deposito, IngresoItem, StockConsolidado, AltaProducto } from "../lib/types.ts";
 
 type Modo = "existente" | "nuevo" | "variante";
 interface Fila extends IngresoItem {
@@ -9,7 +9,17 @@ interface Fila extends IngresoItem {
   nuevoSku: string;
   nuevoNombre: string;
   baseId: string | null;   // producto padre (variante)
+  // Datos para crear el producto COMPLETO en Contabilium (nuevo/variante).
+  costo: string;
+  precio: string;
+  iva: string;             // % (21, 10.5, 27, 0)
+  codBarras: string;
+  codProv: string;
+  stockMin: string;
+  // `descripcion` se hereda de IngresoItem (texto detectado por OCR).
 }
+
+const IVAS = ["21", "10.5", "27", "0"];
 
 export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [deps, setDeps] = useState<Deposito[]>([]);
@@ -17,10 +27,13 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [destino, setDestino] = useState("");
   const [proveedor, setProveedor] = useState("");
   const [tipo, setTipo] = useState("local");
+  const [provsCB, setProvsCB] = useState<{ id: number; nombre: string }[]>([]);
+  const [provCBId, setProvCBId] = useState("");   // IDProveedor de Contabilium
   const [ingresoId, setIngresoId] = useState<string | null>(null);
   const [filas, setFilas] = useState<Fila[]>([]);
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [abierta, setAbierta] = useState<string | null>(null);   // fila con detalle CB desplegado
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -29,6 +42,7 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       setDeps(d); setProductos(s);
       if (d.find((x) => x.codigo === "GEN")) setDestino(d.find((x) => x.codigo === "GEN")!.id);
       else if (d[0]) setDestino(d[0].id);
+      api.proveedoresCB().then(setProvsCB).catch(() => {});
     })();
   }, []);
 
@@ -40,6 +54,7 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       descripcion: "", sku_detectado: null, producto_id: null, cantidad: 1,
       costo_unit: null, confianza: 1, confirmado: false,
       confirmar: true, modo: "existente", nuevoSku: "", nuevoNombre: "", baseId: null,
+      costo: "", precio: "", iva: "21", codBarras: "", codProv: "", stockMin: "",
       ...base,
     };
   }
@@ -53,8 +68,9 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       setFilas(res.items.map((i) => nuevaFila({
         ...i, confirmar: i.confianza >= 0.9, modo: "existente",
         nuevoNombre: i.descripcion, nuevoSku: "",
+        costo: i.costo_unit != null ? String(i.costo_unit) : "",
       })));
-      notify(`Factura leída · ${res.items.length} renglón(es)`);
+      notify(`Factura leída · ${res.items.length} producto(s)`);
     } catch (e) {
       notify("No se pudo leer la factura: " + (e as Error).message);
     } finally {
@@ -75,15 +91,32 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   }
   const listos = filas.filter(filaLista);
 
+  // Arma el AltaProducto COMPLETO que se creará en Contabilium.
+  function altaDe(f: Fila): AltaProducto {
+    const numOrUndef = (v: string) => { const n = Number(v); return v.trim() !== "" && Number.isFinite(n) ? n : undefined; };
+    return {
+      sku: f.nuevoSku.trim(),
+      nombre: (f.nuevoNombre || f.descripcion || f.nuevoSku).trim(),
+      costo: numOrUndef(f.costo),
+      precio: numOrUndef(f.precio),
+      iva: numOrUndef(f.iva),
+      codigo_barras: f.codBarras.trim() || undefined,
+      codigo_proveedor: f.codProv.trim() || undefined,
+      id_proveedor_cb: provCBId ? Number(provCBId) : undefined,
+      descripcion: f.descripcion.trim() || undefined,
+      stock_minimo: numOrUndef(f.stockMin),
+    };
+  }
+
   async function confirmar() {
-    if (!listos.length) return notify("Marcá al menos un renglón completo");
+    if (!listos.length) return notify("Marcá al menos un producto completo");
     setSaving(true);
     try {
       await api.confirmarIngreso(ingresoId ?? "manual", destino, listos.map((f) => {
         const base = { id: f.id.startsWith("man-") ? undefined : f.id, cantidad: f.cantidad };
         if (f.modo === "existente") return { ...base, producto_id: f.producto_id!, aprender_alias: f.confianza < 0.9 ? f.descripcion : undefined };
-        if (f.modo === "nuevo") return { ...base, nuevo: { sku: f.nuevoSku.trim(), nombre: (f.nuevoNombre || f.descripcion || f.nuevoSku).trim() } };
-        return { ...base, variante: { sku: f.nuevoSku.trim(), nombre: (f.nuevoNombre || f.descripcion || f.nuevoSku).trim(), base_producto_id: f.baseId! } };
+        if (f.modo === "nuevo") return { ...base, nuevo: altaDe(f) };
+        return { ...base, variante: { ...altaDe(f), base_producto_id: f.baseId! } };
       }));
       const total = listos.reduce((a, f) => a + f.cantidad, 0);
       const nuevos = listos.filter((f) => f.modo !== "existente").length;
@@ -108,8 +141,15 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       <div className="card card-pad">
         <div className="row2">
           <div className="field">
-            <label>Proveedor</label>
-            <input className="input" value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Maty, LBS, Importación…" />
+            <label>Proveedor (Contabilium)</label>
+            <select className="select" value={provCBId} onChange={(e) => setProvCBId(e.target.value)}>
+              <option value="">— sin asignar —</option>
+              {provsCB.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+            {provsCB.length === 0 && (
+              <input className="input" style={{ marginTop: 6 }} value={proveedor}
+                onChange={(e) => setProveedor(e.target.value)} placeholder="Proveedor (Maty, LBS, Importación…)" />
+            )}
           </div>
           <div className="field">
             <label>Tipo</label>
@@ -132,7 +172,7 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
           <button className="btn primary" onClick={() => fileRef.current?.click()} disabled={reading}>
             {reading ? "Leyendo factura…" : "📷 Subir foto de factura / remito"}
           </button>
-          <button className="btn" onClick={() => setFilas((fs) => [...fs, nuevaFila({})])}>＋ Agregar renglón a mano</button>
+          <button className="btn" onClick={() => setFilas((fs) => [...fs, nuevaFila({})])}>＋ Agregar producto a mano</button>
         </div>
         {!api.connected && <span className="muted" style={{ marginLeft: 4 }}>(en demo, usa una factura de ejemplo)</span>}
       </div>
@@ -140,22 +180,24 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       {filas.length > 0 && (
         <div className="card">
           <div className="card-pad" style={{ paddingBottom: 8 }}>
-            <h3 style={{ fontSize: "1rem" }}>Renglones</h3>
-            <p className="muted">Asigná cada renglón a un producto <b>existente</b>, o marcalo como <b>producto nuevo</b> o <b>variante</b>. La cantidad y el SKU siempre los podés corregir.</p>
+            <h3 style={{ fontSize: "1rem" }}>Productos</h3>
+            <p className="muted">Asigná cada producto a uno <b>existente</b>, o marcalo como <b>nuevo</b> o <b>variante</b>. Para los nuevos, completá los datos que hoy lleva un producto en Contabilium; lo que dejes vacío usa el valor por defecto.</p>
           </div>
           <div className="scroll-x">
             <table className="tbl">
               <thead>
                 <tr>
-                  <th></th><th>Detectado</th><th style={{ minWidth: 320 }}>Producto</th>
+                  <th></th><th>Detectado</th><th style={{ minWidth: 340 }}>Producto</th>
                   <th style={{ textAlign: "right" }}>Cant.</th><th></th>
                 </tr>
               </thead>
               <tbody>
-                {filas.map((f) => (
+                {filas.map((f) => {
+                  const esNuevo = f.modo === "nuevo" || f.modo === "variante";
+                  return (
                   <tr key={f.id} style={{ background: f.confianza < 0.6 && f.modo === "existente" && !f.producto_id ? "var(--warn-wash)" : undefined }}>
-                    <td><input type="checkbox" checked={f.confirmar} onChange={(e) => setFila(f.id, { confirmar: e.target.checked })} /></td>
-                    <td style={{ fontSize: ".84rem", maxWidth: 200 }}>{f.descripcion || <span className="muted">(a mano)</span>}</td>
+                    <td style={{ verticalAlign: "top" }}><input type="checkbox" checked={f.confirmar} onChange={(e) => setFila(f.id, { confirmar: e.target.checked })} /></td>
+                    <td style={{ fontSize: ".84rem", maxWidth: 200, verticalAlign: "top" }}>{f.descripcion || <span className="muted">(a mano)</span>}</td>
                     <td>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <div style={{ display: "flex", gap: 6 }}>
@@ -180,13 +222,45 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
                             </select>
                           )}
                         </div>
-                        {(f.modo === "nuevo" || f.modo === "variante") && (
-                          <div style={{ display: "flex", gap: 6 }}>
-                            <input className="input" style={{ width: 150 }} placeholder="SKU nuevo" value={f.nuevoSku}
-                              onChange={(e) => setFila(f.id, { nuevoSku: e.target.value })} />
-                            <input className="input grow" placeholder="Nombre" value={f.nuevoNombre}
-                              onChange={(e) => setFila(f.id, { nuevoNombre: e.target.value })} />
-                          </div>
+                        {esNuevo && (
+                          <>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input className="input" style={{ width: 150 }} placeholder="SKU nuevo" value={f.nuevoSku}
+                                onChange={(e) => setFila(f.id, { nuevoSku: e.target.value })} />
+                              <input className="input grow" placeholder="Nombre" value={f.nuevoNombre}
+                                onChange={(e) => setFila(f.id, { nuevoNombre: e.target.value })} />
+                              <button type="button" className="btn ghost btn-sm" style={{ flex: "0 0 auto" }}
+                                onClick={() => setAbierta(abierta === f.id ? null : f.id)}>
+                                {abierta === f.id ? "▲ datos" : "▼ datos Contabilium"}
+                              </button>
+                            </div>
+                            {abierta === f.id && (
+                              <div className="cb-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: "8px", background: "var(--surface-2, rgba(0,0,0,.03))", borderRadius: 8 }}>
+                                <label className="mini">Costo
+                                  <input className="input" type="number" step="0.01" min={0} value={f.costo}
+                                    onChange={(e) => setFila(f.id, { costo: e.target.value })} placeholder="0.00" /></label>
+                                <label className="mini">Precio venta (neto)
+                                  <input className="input" type="number" step="0.01" min={0} value={f.precio}
+                                    onChange={(e) => setFila(f.id, { precio: e.target.value })} placeholder="0.00" /></label>
+                                <label className="mini">IVA %
+                                  <select className="select" value={f.iva} onChange={(e) => setFila(f.id, { iva: e.target.value })}>
+                                    {IVAS.map((v) => <option key={v} value={v}>{v}%</option>)}
+                                  </select></label>
+                                <label className="mini">Stock mínimo
+                                  <input className="input" type="number" min={0} value={f.stockMin}
+                                    onChange={(e) => setFila(f.id, { stockMin: e.target.value })} placeholder="0" /></label>
+                                <label className="mini">Código de barras
+                                  <input className="input" value={f.codBarras}
+                                    onChange={(e) => setFila(f.id, { codBarras: e.target.value })} placeholder="EAN / UPC" /></label>
+                                <label className="mini">Código proveedor
+                                  <input className="input" value={f.codProv}
+                                    onChange={(e) => setFila(f.id, { codProv: e.target.value })} placeholder="ref. del proveedor" /></label>
+                                <label className="mini" style={{ gridColumn: "1 / -1" }}>Descripción
+                                  <input className="input" value={f.descripcion}
+                                    onChange={(e) => setFila(f.id, { descripcion: e.target.value })} placeholder="detalle opcional" /></label>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </td>
@@ -195,15 +269,16 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
                         onChange={(e) => setFila(f.id, { cantidad: Math.max(1, Number(e.target.value) || 1) })} />
                     </td>
                     <td style={{ verticalAlign: "top" }}>
-                      <button className="btn ghost btn-sm" onClick={() => quitar(f.id)} title="Quitar renglón">✕</button>
+                      <button className="btn ghost btn-sm" onClick={() => quitar(f.id)} title="Quitar producto">✕</button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
           <div className="card-pad between">
-            <span className="muted">{listos.length} renglón(es) listos {listos.some((f) => f.modo !== "existente") && "· incluye altas nuevas"}</span>
+            <span className="muted">{listos.length} producto(s) listos {listos.some((f) => f.modo !== "existente") && "· incluye altas nuevas"}</span>
             <button className="btn primary" onClick={confirmar} disabled={saving || !listos.length}>
               {saving ? "Confirmando…" : "Confirmar ingreso"}
             </button>
@@ -212,8 +287,9 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       )}
 
       <p className="muted" style={{ fontSize: ".8rem" }}>
-        Los <b>productos nuevos</b> y <b>variantes</b> se crean en la app y quedan marcados como pendientes de
-        alta en Contabilium (se crean allá cuando activemos la escritura). El stock queda cargado igual.
+        Los <b>productos nuevos</b> y <b>variantes</b> se crean en la app con todos sus datos y quedan marcados como
+        pendientes de alta en Contabilium (se crean allá con la info completa cuando activemos la escritura). El stock
+        del depósito queda cargado igual.
       </p>
     </div>
   );

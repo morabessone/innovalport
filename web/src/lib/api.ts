@@ -4,7 +4,7 @@
 import { supabase, isConnected, functionsBase, anonKey } from "./supabase.ts";
 import { demo } from "./demo.ts";
 import type {
-  Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria,
+  Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
 } from "./types.ts";
 
 export const connected = isConnected;
@@ -99,6 +99,15 @@ export const api = {
     });
   },
 
+  // Proveedores de Contabilium (para completar IDProveedor al crear productos).
+  async proveedoresCB(): Promise<{ id: number; nombre: string }[]> {
+    if (!connected) return [];
+    try {
+      const r = await callFn<{ proveedores: { id: number; nombre: string }[] }>("proveedores", {});
+      return r.proveedores ?? [];
+    } catch { return []; }
+  },
+
   async ocrIngreso(imageB64: string, mediaType: string, proveedor?: string, tipo = "local"): Promise<{ ingreso_id: string; items: IngresoItem[] }> {
     if (!connected) return { ingreso_id: "demo", items: demo.ocr() };
     return callFn("ocr-ingreso", { image_base64: imageB64, media_type: mediaType, proveedor, tipo });
@@ -106,8 +115,8 @@ export const api = {
 
   async confirmarIngreso(ingresoId: string, destino: string, items: {
     id?: string; producto_id?: string | null; cantidad: number; aprender_alias?: string;
-    nuevo?: { sku: string; nombre: string; costo?: number };
-    variante?: { sku: string; nombre: string; base_producto_id: string; costo?: number };
+    nuevo?: AltaProducto;
+    variante?: AltaProducto & { base_producto_id: string };
   }[]) {
     if (!connected) return demo.confirmarIngreso(destino, items.filter((i) => i.producto_id).map((i) => ({ id: i.id, producto_id: i.producto_id!, cantidad: i.cantidad })));
     await callFn("acciones", {

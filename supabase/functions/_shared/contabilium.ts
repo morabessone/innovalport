@@ -187,6 +187,58 @@ export function planEstadoProducto(
   };
 }
 
+// Crear un producto (concepto) COMPLETO en Contabilium. Endpoint confirmado:
+//   POST /api/conceptos  (body con la estructura del concepto).
+// Rellena todos los campos que tiene un producto hoy; los que no vienen usan
+// defaults de la cuenta (rubro General=299062, moneda peso=86287, IVA 21).
+export interface NuevoProductoCB {
+  sku: string;
+  nombre: string;
+  costo?: number;
+  precio?: number;             // precio de venta neto
+  iva?: number;                // % (21, 10.5, 27, 0)
+  codigoBarras?: string;
+  codigoProveedor?: string;
+  idProveedorCB?: number | null;
+  descripcion?: string;
+  observaciones?: string;
+  stockMinimo?: number;
+  idRubro?: number;
+  idMoneda?: number;
+}
+export function planCrearProducto(p: NuevoProductoCB): PlanRequest {
+  const iva = p.iva ?? 21;
+  const precio = Number(p.precio ?? 0) || 0;
+  const precioFinal = precio ? Number((precio * (1 + iva / 100)).toFixed(2)) : 0;
+  return {
+    base: BASE,
+    endpoint: "/api/conceptos",
+    method: "POST",
+    body: {
+      Codigo: p.sku,
+      Nombre: p.nombre,
+      Tipo: "Producto",
+      Estado: "Activo",
+      Descripcion: p.descripcion ?? "",
+      Observaciones: p.observaciones ?? "",
+      CodigoBarras: p.codigoBarras ?? "",
+      CodigoProveedor: p.codigoProveedor ?? "",
+      CostoInterno: Number(p.costo ?? 0) || 0,
+      Precio: precio,
+      PrecioFinal: precioFinal,
+      Iva: iva,
+      StockMinimo: Math.round(Number(p.stockMinimo ?? 0)) || 0,
+      IDProveedor: p.idProveedorCB ?? null,
+      IdRubro: p.idRubro ?? 299062,
+      IDMoneda: p.idMoneda ?? 86287,
+      SincronizaStock: false,
+      SincronizaPrecio: false,
+      AplicaRG5329: false,
+    },
+    descripcion: `Crear producto ${p.sku} (${p.nombre}) en Contabilium`,
+  };
+}
+
 // Nota de crédito rápida a partir de un comprobante existente. [VERIFICAR]
 export function planNotaCredito(cbComprobanteId: string): PlanRequest {
   return {

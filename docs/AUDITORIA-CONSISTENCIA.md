@@ -37,21 +37,30 @@ Con esto hay **una sola autoridad por dato** y ninguna sync pisa a otra. El stoc
 que se ve = lo que dice Contabilium. Cada acción (ingreso, movimiento, inventario,
 devolución) queda encolada hacia Contabilium para mantener la consistencia.
 
-## Pendiente antes de habilitar ESCRITURA (hoy todo dry-run)
+## Contratos de escritura de Contabilium — CONFIRMADOS (sondas con id inexistente)
 
-Estas cosas no afectan la visibilidad actual (lectura), pero hay que resolverlas
-antes de prender la escritura a Contabilium:
+Validados sin cambiar nada real (id falso → "el concepto no existe" = formato OK):
 
-- **Payload de `ajustarStock`**: confirmar los nombres de campos y si toma
-  **delta** o **valor absoluto**. Para el conteo inicial conviene setear valor
-  absoluto por SKU/depósito. El worker está en dry-run: registra el plan exacto en
-  `cb_queue.simulacion` para revisarlo antes de ejecutar.
-- **Ingreso de producto NUEVO**: al alta, el producto no tiene `cb_producto_id`,
-  así que su ajuste de stock no puede referenciarlo en Contabilium. Los productos
-  nuevos deben crearse primero en Contabilium (o vía API si se confirma el
-  endpoint). Quedan marcados `cb_pendiente=true`.
-- **Endpoints [VERIFICAR]** del worker: `estado_producto` (PUT concepto) y
-  `nota_credito`. Validar contra la API antes de activar.
+| Acción | Endpoint confirmado |
+|--------|---------------------|
+| Ajustar stock | `GET /api/conceptos/ajustarStock?id={concepto}&idDeposito={dep}&cantidad={n}` |
+| Dar de baja producto | `GET /api/conceptos/darDeBaja?id={concepto}` |
+| Reactivar producto | `GET /api/conceptos/darDeAlta?id={concepto}` |
+| Crear producto | `POST /api/conceptos` (body con la estructura del concepto) |
+
+El worker (`_shared/contabilium.ts`) ya usa estos endpoints. Sigue en **dry-run**:
+registra el plan exacto en `cb_queue.simulacion` para revisarlo antes de ejecutar.
+
+### Lo único que falta confirmar (1 test controlado, reversible)
+- **`cantidad` en `ajustarStock`: ¿DELTA o ABSOLUTO?** No se deduce por sonda
+  (requiere tocar un SKU real y observar). Se confirma con **un** test reversible:
+  ajustar +1 en un SKU, mirar `getStockByDeposito`, y revertir. Para el conteo
+  inicial conviene absoluto; si es delta, el worker calcula `delta = contado − actual`.
+- **Ingreso de producto NUEVO**: crear el concepto en Contabilium
+  (`POST /api/conceptos`) ANTES del ajuste de stock, para obtener su
+  `cb_producto_id`. (Flujo de Ingreso — en construcción.)
+- **`nota_credito`** (devoluciones): endpoint aún sin ubicar. Baja prioridad
+  (la devolución no lo necesita para el stock).
 
 ## Secuencia para arrancar
 

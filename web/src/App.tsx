@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./lib/api.ts";
+import { supabase } from "./lib/supabase.ts";
+import { emailAllowed, signOut } from "./lib/auth.ts";
 import { Panel } from "./views/Panel.tsx";
 import { Reponer } from "./views/Reponer.tsx";
 import { Ingreso } from "./views/Ingreso.tsx";
@@ -8,8 +10,10 @@ import { Devoluciones } from "./views/Devoluciones.tsx";
 import { Inventario } from "./views/Inventario.tsx";
 import { Historial } from "./views/Historial.tsx";
 import { Login } from "./views/Login.tsx";
+import { Home } from "./views/Home.tsx";
 
 type Tab = "panel" | "reponer" | "ingreso" | "movimiento" | "devoluciones" | "inventario" | "historial";
+type View = "home" | "stock";
 type Theme = "auto" | "light" | "dark";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -36,21 +40,59 @@ function applyTheme(t: Theme) {
 }
 
 export function App() {
+  const [view, setView] = useState<View>("home");
   const [tab, setTab] = useState<Tab>("panel");
   const [toast, setToast] = useState<string | null>(null);
-  const [authed, setAuthed] = useState<boolean>(() => localStorage.getItem("cs-auth") === "1");
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("cs-theme") as Theme) || "auto");
 
+  // ---- sesión (Google via Supabase; en modo demo sin Supabase entra directo) ----
+  const [email, setEmail] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authErr, setAuthErr] = useState<string | null>(null);
+
   useEffect(() => { applyTheme(theme); localStorage.setItem("cs-theme", theme); }, [theme]);
+
+  useEffect(() => {
+    if (!supabase) { setEmail("demo@innovalport.com"); setAuthReady(true); return; } // modo demo
+
+    let mounted = true;
+    const resolve = (session: { user?: { email?: string | null } } | null) => {
+      if (!mounted) return;
+      const mail = session?.user?.email ?? null;
+      if (session && !emailAllowed(mail)) {
+        // La cuenta no es del dominio permitido: cerrar sesión y avisar.
+        setAuthErr(`La cuenta ${mail ?? ""} no pertenece a @innovalport.com. Usá tu cuenta de Innovalport.`);
+        setEmail(null);
+        supabase!.auth.signOut();
+      } else {
+        setAuthErr(null);
+        setEmail(mail);
+      }
+      setAuthReady(true);
+    };
+
+    supabase.auth.getSession().then(({ data }) => resolve(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => resolve(session));
+    return () => { mounted = false; sub.subscription.unsubscribe(); };
+  }, []);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2600);
   }, []);
 
-  function logout() { localStorage.removeItem("cs-auth"); setAuthed(false); }
+  async function logout() {
+    await signOut();
+    setEmail(null);
+    setView("home");
+  }
 
-  if (!authed) return <Login onOk={() => setAuthed(true)} />;
+  if (!authReady) {
+    return <div className="login-bg"><div className="auth-loading">Cargando…</div></div>;
+  }
+  if (!email) return <Login error={authErr} />;
+
+  const enStock = view === "stock";
 
   return (
     <div className="app">
@@ -69,10 +111,15 @@ export function App() {
               </svg>
               <div className="wm">
                 <b>INNOVAL<span>PORT</span></b>
-                <small>Centro de Stock</small>
+                <small>{enStock ? "Central de Stock" : "Herramientas internas"}</small>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {enStock && (
+                <button className="theme-btn" onClick={() => setView("home")} title="Volver al Inicio">
+                  <span aria-hidden="true">←</span> Inicio
+                </button>
+              )}
               <button
                 className="theme-btn"
                 onClick={() => setTheme(THEME_NEXT[theme])}
@@ -87,30 +134,38 @@ export function App() {
             </div>
           </div>
         </div>
-        <div className="navbar">
-          <div className="bar-in">
-            <nav className="tabs">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  className={"tab" + (tab === t.id ? " active" : "")}
-                  onClick={() => setTab(t.id)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </nav>
+        {enStock && (
+          <div className="navbar">
+            <div className="bar-in">
+              <nav className="tabs">
+                {TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    className={"tab" + (tab === t.id ? " active" : "")}
+                    onClick={() => setTab(t.id)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
           </div>
-        </div>
+        )}
       </header>
 
-      {tab === "panel" && <Panel notify={notify} />}
-      {tab === "reponer" && <Reponer notify={notify} />}
-      {tab === "ingreso" && <Ingreso notify={notify} />}
-      {tab === "movimiento" && <Movimiento notify={notify} />}
-      {tab === "devoluciones" && <Devoluciones notify={notify} />}
-      {tab === "inventario" && <Inventario notify={notify} />}
-      {tab === "historial" && <Historial />}
+      {view === "home" && <Home email={email} onOpen={(t) => t === "stock" && setView("stock")} />}
+
+      {enStock && (
+        <>
+          {tab === "panel" && <Panel notify={notify} />}
+          {tab === "reponer" && <Reponer notify={notify} />}
+          {tab === "ingreso" && <Ingreso notify={notify} />}
+          {tab === "movimiento" && <Movimiento notify={notify} />}
+          {tab === "devoluciones" && <Devoluciones notify={notify} />}
+          {tab === "inventario" && <Inventario notify={notify} />}
+          {tab === "historial" && <Historial />}
+        </>
+      )}
 
       {toast && (
         <div className="toast" role="status">

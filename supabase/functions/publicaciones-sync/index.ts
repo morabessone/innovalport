@@ -103,6 +103,16 @@ Deno.serve(async (req) => {
       if (k) reclamosPorSku.set(k, (reclamosPorSku.get(k) ?? 0) + 1);
     }
 
+    // Ventas por SKU en los últimos 90 días (cb_ventas) -> "activa de verdad".
+    const { data: ventas } = await d.from("cb_ventas").select("items, fecha").gte("fecha", desde90);
+    const vendido90 = new Map<string, number>();
+    for (const v of (ventas ?? []) as any[]) {
+      for (const it of (v.items ?? []) as any[]) {
+        const k = String(it.sku ?? "").toLowerCase();
+        if (k) vendido90.set(k, (vendido90.get(k) ?? 0) + Number(it.cantidad ?? 0));
+      }
+    }
+
     // 1) scan de item ids del vendedor
     const ids: string[] = []; let scroll = "";
     for (let i = 0; i < 120; i++) {
@@ -131,6 +141,9 @@ Deno.serve(async (req) => {
         const isCatalog = Boolean(it.catalog_listing) || Boolean(it.catalog_product_id);
         const disp = prod ? (dispPorProd.get(prod.id) ?? 0) : 0;
         const avail = Number(it.available_quantity ?? 0);
+        const vend90 = sku ? (vendido90.get(sku) ?? 0) : 0;
+        // Activa de verdad: publicada (status active) y con stock o ventas 90d.
+        const activaReal = it.status === "active" && (avail > 0 || vend90 > 0);
 
         // Catálogo: price_to_win (best-effort). Devuelve el precio para ganar.
         let catalog: Record<string, unknown> = {};
@@ -174,6 +187,7 @@ Deno.serve(async (req) => {
           logistic_type: it.shipping?.logistic_type ?? null,
           permalink: it.permalink ?? null, thumbnail: it.thumbnail ?? null,
           is_catalog: isCatalog, catalog_product_id: it.catalog_product_id ?? null,
+          activa_real: activaReal, vendidos_90: vend90,
           catalog, costo: costo || null, precio_min: precioMin || null,
           margen_pct: margen, sugerencia, alertas,
           atributos: (it.attributes ?? []).slice(0, 40),
@@ -190,8 +204,9 @@ Deno.serve(async (req) => {
     }
     await d.from("sync_estado").upsert({ job: "publicaciones", ultima_ok: new Date().toISOString(), detalle: { publicaciones: rows.length } }, { onConflict: "job" });
 
-    const conAlerta = rows.filter((r) => (r.alertas as unknown[]).length > 0).length;
-    return json({ ok: true, publicaciones: rows.length, con_alerta: conAlerta });
+    const activas = rows.filter((r) => r.activa_real).length;
+    const conAlerta = rows.filter((r) => r.activa_real && (r.alertas as unknown[]).length > 0).length;
+    return json({ ok: true, publicaciones: rows.length, activas, con_alerta: conAlerta });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }

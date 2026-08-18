@@ -125,6 +125,8 @@ export interface Publicacion {
   thumbnail: string | null;
   is_catalog: boolean;
   catalog_product_id: string | null;
+  activa_real: boolean;
+  vendidos_90: number;
   catalog: CatalogInfo;
   costo: number | null;
   precio_min: number | null;

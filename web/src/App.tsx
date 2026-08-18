@@ -11,20 +11,20 @@ import { Inventario } from "./views/Inventario.tsx";
 import { Historial } from "./views/Historial.tsx";
 import { Login } from "./views/Login.tsx";
 import { Home } from "./views/Home.tsx";
+import { Sidebar, type Section } from "./views/Sidebar.tsx";
 
-type Tab = "panel" | "reponer" | "ingreso" | "movimiento" | "devoluciones" | "inventario" | "historial";
-type View = "home" | "stock";
 type Theme = "auto" | "light" | "dark";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "panel", label: "Panel" },
-  { id: "reponer", label: "Reponer" },
-  { id: "ingreso", label: "Ingreso" },
-  { id: "movimiento", label: "Movimiento" },
-  { id: "devoluciones", label: "Devoluciones" },
-  { id: "inventario", label: "Inventario" },
-  { id: "historial", label: "Historial" },
-];
+const SECTION_TITLE: Record<Section, string> = {
+  home: "Herramientas internas",
+  panel: "Central de Stock",
+  reponer: "Central de Stock",
+  ingreso: "Central de Stock",
+  movimiento: "Central de Stock",
+  devoluciones: "Central de Stock",
+  inventario: "Central de Stock",
+  historial: "Central de Stock",
+};
 
 const THEME_NEXT: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };
 const THEME_UI: Record<Theme, { icon: string; label: string }> = {
@@ -40,10 +40,10 @@ function applyTheme(t: Theme) {
 }
 
 export function App() {
-  const [view, setView] = useState<View>("home");
-  const [tab, setTab] = useState<Tab>("panel");
+  const [section, setSection] = useState<Section>("home");
   const [toast, setToast] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("cs-theme") as Theme) || "auto");
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ---- sesión: Google (Supabase) o el acceso local usuario/contraseña ----
   const [email, setEmail] = useState<string | null>(null);
@@ -61,7 +61,6 @@ export function App() {
       if (!mounted) return;
       const mail = session?.user?.email ?? null;
       if (session && !emailAllowed(mail)) {
-        // La cuenta no es del dominio permitido: cerrar sesión y avisar.
         setAuthErr(`La cuenta ${mail ?? ""} no pertenece a @innovalport.com. Usá tu cuenta de Innovalport.`);
         setEmail(null);
         supabase!.auth.signOut();
@@ -87,7 +86,12 @@ export function App() {
     localStorage.removeItem("cs-auth");
     setLocalAuth(false);
     setEmail(null);
-    setView("home");
+    setSection("home");
+  }
+
+  function navigate(s: Section) {
+    setSection(s);
+    setMenuOpen(false);
   }
 
   // Identidad activa: la cuenta de Google, o el usuario local si entró por ahí.
@@ -98,14 +102,18 @@ export function App() {
   }
   if (!identity) return <Login error={authErr} onLocalOk={() => setLocalAuth(true)} />;
 
-  const enStock = view === "stock";
-
   return (
-    <div className={"app" + (view === "home" ? " app-home" : "")}>
+    <div className="app">
       <header className="topbar">
         <div className="brandbar">
           <div className="bar-in">
             <div className="brand">
+              <button
+                className="menu-btn"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="Abrir menú"
+                aria-expanded={menuOpen}
+              >☰</button>
               <svg className="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
                 <path d="M16 2 28 9v14L16 30 4 23V9z" stroke="#7EE6FF" stroke-width="1.6" opacity=".55" />
                 <path d="M10 20l6-10 6 10-6-3z" fill="url(#g)" />
@@ -117,15 +125,10 @@ export function App() {
               </svg>
               <div className="wm">
                 <b>INNOVAL<span>PORT</span></b>
-                <small>{enStock ? "Central de Stock" : "Herramientas internas"}</small>
+                <small>{SECTION_TITLE[section]}</small>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {enStock && (
-                <button className="theme-btn" onClick={() => setView("home")} title="Volver al Inicio">
-                  <span aria-hidden="true">←</span> Inicio
-                </button>
-              )}
               <button
                 className="theme-btn"
                 onClick={() => setTheme(THEME_NEXT[theme])}
@@ -140,38 +143,25 @@ export function App() {
             </div>
           </div>
         </div>
-        {enStock && (
-          <div className="navbar">
-            <div className="bar-in">
-              <nav className="tabs">
-                {TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    className={"tab" + (tab === t.id ? " active" : "")}
-                    onClick={() => setTab(t.id)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </nav>
-            </div>
-          </div>
-        )}
       </header>
 
-      {view === "home" && <Home email={identity} onOpen={(t) => t === "stock" && setView("stock")} />}
+      <div className="shell">
+        {menuOpen && <div className="side-backdrop" onClick={() => setMenuOpen(false)} />}
+        <aside className={"sidebar" + (menuOpen ? " open" : "")}>
+          <Sidebar section={section} onNavigate={navigate} />
+        </aside>
 
-      {enStock && (
-        <>
-          {tab === "panel" && <Panel notify={notify} />}
-          {tab === "reponer" && <Reponer notify={notify} />}
-          {tab === "ingreso" && <Ingreso notify={notify} />}
-          {tab === "movimiento" && <Movimiento notify={notify} />}
-          {tab === "devoluciones" && <Devoluciones notify={notify} />}
-          {tab === "inventario" && <Inventario notify={notify} />}
-          {tab === "historial" && <Historial />}
-        </>
-      )}
+        <main className="content">
+          {section === "home" && <Home email={identity} onOpen={(t) => t === "stock" && setSection("panel")} />}
+          {section === "panel" && <Panel notify={notify} />}
+          {section === "reponer" && <Reponer notify={notify} />}
+          {section === "ingreso" && <Ingreso notify={notify} />}
+          {section === "movimiento" && <Movimiento notify={notify} />}
+          {section === "devoluciones" && <Devoluciones notify={notify} />}
+          {section === "inventario" && <Inventario notify={notify} />}
+          {section === "historial" && <Historial />}
+        </main>
+      </div>
 
       {toast && (
         <div className="toast" role="status">

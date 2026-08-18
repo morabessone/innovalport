@@ -101,3 +101,51 @@ export interface IngresoItem {
 export interface SyncEstado {
   ultima_ok: string | null;
 }
+
+// ---- Publicaciones (Mercado Libre, espejo de lectura) ----
+export interface Alerta { tipo: string; nivel: "critico" | "alerta" | "info"; texto: string; }
+export interface CatalogInfo { price_to_win?: number | null; precio_ganador?: number | null; ganando?: boolean; status?: string | null; catalog_product_id?: string | null; }
+export interface Sugerencia { accion?: "subir" | "bajar" | "mantener"; precio_sugerido?: number | null; motivo?: string; margen_en_sugerido?: number | null; piso?: number | null; }
+
+export interface Publicacion {
+  ml_item_id: string;
+  sku: string | null;
+  producto_id: string | null;
+  titulo: string | null;
+  categoria_id: string | null;
+  estado: string | null;
+  precio: number;
+  moneda: string;
+  available_quantity: number;
+  sold_quantity: number;
+  health: number | null;
+  listing_type_id: string | null;
+  logistic_type: string | null;
+  permalink: string | null;
+  thumbnail: string | null;
+  is_catalog: boolean;
+  catalog_product_id: string | null;
+  catalog: CatalogInfo;
+  costo: number | null;
+  precio_min: number | null;
+  margen_pct: number | null;
+  sugerencia: Sugerencia;
+  alertas: Alerta[];
+  atributos: { id?: string; name?: string; value_name?: string }[];
+  metrics: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface PublicacionSugerencia {
+  id: string;
+  producto_id: string | null;
+  sku: string | null;
+  titulo_sugerido: string | null;
+  descripcion_sugerida: string | null;
+  categoria_sugerida: string | null;
+  atributos: { nombre?: string; valor?: string }[];
+  imagenes: string[];
+  fuente_imagenes: string | null;
+  estado: string;
+  updated_at: string;
+}

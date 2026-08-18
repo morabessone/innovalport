@@ -5,6 +5,7 @@ import { supabase, isConnected, functionsBase, anonKey } from "./supabase.ts";
 import { demo } from "./demo.ts";
 import type {
   Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
+  Publicacion, PublicacionSugerencia,
 } from "./types.ts";
 
 export const connected = isConnected;
@@ -188,6 +189,33 @@ export const api = {
       .from("v_auditoria").select("*").order("created_at", { ascending: false }).limit(limit);
     if (error) throw error;
     return data as Auditoria[];
+  },
+
+  // ---- Publicaciones (Mercado Libre, lectura) ----
+  async publicaciones(): Promise<Publicacion[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!
+      .from("publicaciones").select("*").order("precio", { ascending: false });
+    if (error) throw error;
+    return (data as Publicacion[]) ?? [];
+  },
+
+  async sugerenciasPub(): Promise<PublicacionSugerencia[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!
+      .from("publicacion_sugerencias").select("*").order("updated_at", { ascending: false });
+    if (error) throw error;
+    return (data as PublicacionSugerencia[]) ?? [];
+  },
+
+  async syncPublicaciones(): Promise<void> {
+    if (!connected) return;
+    await callFn("publicaciones-sync", {});
+  },
+
+  async sugerirPublicacion(producto_id?: string): Promise<void> {
+    if (!connected) return;
+    await callFn("publicacion-sugerir", producto_id ? { producto_id } : { limit: 6 });
   },
 
   // Sube una foto de devolución al storage y devuelve la URL pública.

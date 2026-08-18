@@ -11,6 +11,7 @@ import { Inventario } from "./views/Inventario.tsx";
 import { Historial } from "./views/Historial.tsx";
 import { Login } from "./views/Login.tsx";
 import { Home } from "./views/Home.tsx";
+import { Publicaciones, type PubTab } from "./views/Publicaciones.tsx";
 import { Sidebar, type Section } from "./views/Sidebar.tsx";
 
 type Theme = "auto" | "light" | "dark";
@@ -24,6 +25,12 @@ const SECTION_TITLE: Record<Section, string> = {
   devoluciones: "Central de Stock",
   inventario: "Central de Stock",
   historial: "Central de Stock",
+  pub_activas: "Publicaciones",
+  pub_pendientes: "Publicaciones",
+  pub_optim: "Publicaciones",
+};
+const PUB_SUBTAB: Partial<Record<Section, PubTab>> = {
+  pub_activas: "activas", pub_pendientes: "pendientes", pub_optim: "optim",
 };
 
 const THEME_NEXT: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };
@@ -152,7 +159,7 @@ export function App() {
         </aside>
 
         <main className="content">
-          {section === "home" && <Home email={identity} onOpen={(t) => t === "stock" && setSection("panel")} />}
+          {section === "home" && <Home email={identity} onOpen={(t) => setSection(t === "publicaciones" ? "pub_activas" : "panel")} />}
           {section === "panel" && <Panel notify={notify} />}
           {section === "reponer" && <Reponer notify={notify} />}
           {section === "ingreso" && <Ingreso notify={notify} />}
@@ -160,6 +167,7 @@ export function App() {
           {section === "devoluciones" && <Devoluciones notify={notify} />}
           {section === "inventario" && <Inventario notify={notify} />}
           {section === "historial" && <Historial />}
+          {PUB_SUBTAB[section] && <Publicaciones subtab={PUB_SUBTAB[section]!} notify={notify} />}
         </main>
       </div>
 

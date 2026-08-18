@@ -45,8 +45,9 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("cs-theme") as Theme) || "auto");
 
-  // ---- sesión (Google via Supabase; en modo demo sin Supabase entra directo) ----
+  // ---- sesión: Google (Supabase) o el acceso local usuario/contraseña ----
   const [email, setEmail] = useState<string | null>(null);
+  const [localAuth, setLocalAuth] = useState<boolean>(() => localStorage.getItem("cs-auth") === "1");
   const [authReady, setAuthReady] = useState(false);
   const [authErr, setAuthErr] = useState<string | null>(null);
 
@@ -83,14 +84,19 @@ export function App() {
 
   async function logout() {
     await signOut();
+    localStorage.removeItem("cs-auth");
+    setLocalAuth(false);
     setEmail(null);
     setView("home");
   }
 
-  if (!authReady) {
+  // Identidad activa: la cuenta de Google, o el usuario local si entró por ahí.
+  const identity = email ?? (localAuth ? "innovalport" : null);
+
+  if (!authReady && !localAuth) {
     return <div className="login-bg"><div className="auth-loading">Cargando…</div></div>;
   }
-  if (!email) return <Login error={authErr} />;
+  if (!identity) return <Login error={authErr} onLocalOk={() => setLocalAuth(true)} />;
 
   const enStock = view === "stock";
 
@@ -153,7 +159,7 @@ export function App() {
         )}
       </header>
 
-      {view === "home" && <Home email={email} onOpen={(t) => t === "stock" && setView("stock")} />}
+      {view === "home" && <Home email={identity} onOpen={(t) => t === "stock" && setView("stock")} />}
 
       {enStock && (
         <>

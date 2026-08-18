@@ -329,6 +329,8 @@ tr.rowlink:hover td { background: var(--accent-wash, rgba(30,99,230,.06)); }
 .login-brand small { display: block; color: var(--ink-faint); font-size: .74rem; margin-top: 1px; }
 .login-title { font-size: 1.35rem; font-weight: 750; margin-bottom: 16px; }
 .login-err { color: var(--bad); font-size: .84rem; margin-bottom: 10px; }
+.login-or { display: flex; align-items: center; gap: 12px; margin: 20px 0 16px; color: var(--ink-faint); font-size: .78rem; }
+.login-or::before, .login-or::after { content: ""; height: 1px; flex: 1; background: var(--line); }
 .login-note { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); font-size: .82rem; color: var(--ink-faint); text-align: center; }
 .login-note b { color: var(--ink-soft); }
 .auth-loading { color: #fff; font-family: var(--display); letter-spacing: .04em; opacity: .85; }

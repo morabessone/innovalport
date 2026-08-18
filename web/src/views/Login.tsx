@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { signInWithGoogle } from "../lib/auth.ts";
 
-// Ingreso con Google, restringido a cuentas @innovalport.com. La verificación
-// del dominio la hace App al volver de Google (ver emailAllowed).
-export function Login({ error }: { error?: string | null }) {
+// Ingreso con Google (restringido a @innovalport.com) y, como alternativa, el
+// acceso con usuario/contraseña de siempre (compuerta local en el navegador).
+const USER = "innovalport";
+const PASS = "Riquelme10+";
+
+export function Login({ error, onLocalOk }: { error?: string | null; onLocalOk: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [u, setU] = useState("");
+  const [p, setP] = useState("");
+  const [localErr, setLocalErr] = useState(false);
 
   async function go() {
     setBusy(true);
@@ -16,6 +22,16 @@ export function Login({ error }: { error?: string | null }) {
     } catch (e) {
       setErr((e as Error).message || "No se pudo iniciar sesión.");
       setBusy(false);
+    }
+  }
+
+  function submitLocal(e: React.FormEvent) {
+    e.preventDefault();
+    if (u.trim() === USER && p === PASS) {
+      localStorage.setItem("cs-auth", "1");
+      onLocalOk();
+    } else {
+      setLocalErr(true);
     }
   }
 
@@ -43,7 +59,24 @@ export function Login({ error }: { error?: string | null }) {
 
         {(error || err) && <div className="login-err" style={{ marginTop: 14 }}>{error || err}</div>}
 
-        <div className="login-note">Solo cuentas <b>@innovalport.com</b></div>
+        <div className="login-or"><span>o con usuario</span></div>
+
+        <form onSubmit={submitLocal} className="stack" style={{ gap: 12 }}>
+          <div className="field">
+            <label>Usuario</label>
+            <input className="input" value={u} autoCapitalize="none" autoComplete="username"
+              onChange={(e) => { setU(e.target.value); setLocalErr(false); }} placeholder="usuario" />
+          </div>
+          <div className="field">
+            <label>Contraseña</label>
+            <input className="input" type="password" value={p} autoComplete="current-password"
+              onChange={(e) => { setP(e.target.value); setLocalErr(false); }} placeholder="••••••••" />
+          </div>
+          {localErr && <div className="login-err">Usuario o contraseña incorrectos.</div>}
+          <button className="btn" type="submit" style={{ width: "100%", justifyContent: "center" }}>Entrar</button>
+        </form>
+
+        <div className="login-note">Google: solo cuentas <b>@innovalport.com</b></div>
       </div>
     </div>
   );

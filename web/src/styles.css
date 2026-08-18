@@ -338,8 +338,11 @@ tr.rowlink:hover td { background: var(--accent-wash, rgba(30,99,230,.06)); }
 .google-btn:hover:not(:disabled) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
 .google-btn svg { flex: 0 0 auto; }
 
-/* Inicio (dashboard de herramientas) */
-.home { max-width: 900px; margin: 8px auto 0; }
+/* Inicio (dashboard de herramientas) — ocupa todo el ancho de la pantalla */
+.app-home { max-width: none; padding-left: 0; padding-right: 0; }
+.app-home .topbar { margin-left: 0; margin-right: 0; }
+.app-home .bar-in { max-width: none; padding-left: clamp(20px, 4vw, 56px); padding-right: clamp(20px, 4vw, 56px); }
+.home { max-width: none; margin: 12px 0 0; padding: 0 clamp(20px, 4vw, 56px); }
 .home-hero { margin-bottom: 26px; }
 .eyebrow-h { font-family: var(--display); font-size: .74rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
 .home-title { font-size: clamp(1.7rem, 4vw, 2.3rem); font-weight: 800; letter-spacing: -.02em; margin: 6px 0 8px; }

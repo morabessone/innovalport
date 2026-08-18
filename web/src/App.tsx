@@ -101,7 +101,7 @@ export function App() {
   const enStock = view === "stock";
 
   return (
-    <div className="app">
+    <div className={"app" + (view === "home" ? " app-home" : "")}>
       <header className="topbar">
         <div className="brandbar">
           <div className="bar-in">

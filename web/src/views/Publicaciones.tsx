@@ -30,6 +30,7 @@ export function Publicaciones({ subtab, notify }: { subtab: PubTab; notify: (m: 
   const [q, setQ] = useState("");
   const [soloAlertas, setSoloAlertas] = useState(false);
   const [soloCatalogo, setSoloCatalogo] = useState(false);
+  const [verViejas, setVerViejas] = useState(false);
 
   async function cargar() {
     setLoading(true);
@@ -54,17 +55,24 @@ export function Publicaciones({ subtab, notify }: { subtab: PubTab; notify: (m: 
     finally { setBusy(false); }
   }
 
+  // Base: solo las "activas de verdad" (con stock o ventas en 90 días), salvo
+  // que se pida ver las viejas/inactivas.
+  const activas = useMemo(() => pubs.filter((p) => p.activa_real), [pubs]);
+  const viejas = pubs.length - activas.length;
+
   const filtradas = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return pubs.filter((p) => {
+    const base = verViejas ? pubs : activas;
+    return base.filter((p) => {
       if (soloAlertas && p.alertas.length === 0) return false;
       if (soloCatalogo && !p.is_catalog) return false;
       if (t && !(`${p.titulo ?? ""} ${p.sku ?? ""} ${p.ml_item_id}`.toLowerCase().includes(t))) return false;
       return true;
     });
-  }, [pubs, q, soloAlertas, soloCatalogo]);
+  }, [pubs, activas, verViejas, q, soloAlertas, soloCatalogo]);
 
-  // Optimizaciones: publicaciones con sugerencia accionable o alertas, ordenadas por impacto.
+  // Optimizaciones: SOLO sobre publicaciones activas de verdad, con sugerencia
+  // accionable o alertas, ordenadas por impacto.
   const optimizaciones = useMemo(() => {
     const rank = (p: Publicacion) => {
       const n = peor(p.alertas);
@@ -72,10 +80,10 @@ export function Publicaciones({ subtab, notify }: { subtab: PubTab; notify: (m: 
       const acc = p.sugerencia?.accion && p.sugerencia.accion !== "mantener" ? 1 : 0;
       return base * 2 + acc;
     };
-    return pubs
+    return activas
       .filter((p) => (p.sugerencia?.accion && p.sugerencia.accion !== "mantener") || p.alertas.length > 0)
       .sort((a, b) => rank(b) - rank(a));
-  }, [pubs]);
+  }, [activas]);
 
   if (loading) return <div className="stack"><PubHead subtab={subtab} /><div className="empty">Cargando…</div></div>;
 
@@ -90,15 +98,16 @@ export function Publicaciones({ subtab, notify }: { subtab: PubTab; notify: (m: 
       {subtab === "activas" && (
         <>
           <div className="kpis">
-            <Kpi n={pubs.length} label="Publicaciones" />
-            <Kpi n={pubs.filter((p) => p.is_catalog && p.catalog?.ganando === false).length} label="Perdiendo catálogo" tone="warn" />
-            <Kpi n={pubs.filter((p) => p.alertas.some((a) => a.tipo === "precio_bajo_piso")).length} label="Bajo el piso" tone="crit" />
-            <Kpi n={pubs.filter((p) => p.alertas.some((a) => a.tipo === "reponer")).length} label="Para reponer" tone="info" />
+            <Kpi n={activas.length} label="Activas (con stock o venta 90d)" />
+            <Kpi n={activas.filter((p) => p.is_catalog && p.catalog?.ganando === false).length} label="Perdiendo catálogo" tone="warn" />
+            <Kpi n={activas.filter((p) => p.alertas.some((a) => a.tipo === "precio_bajo_piso")).length} label="Bajo el piso" tone="crit" />
+            <Kpi n={activas.filter((p) => p.alertas.some((a) => a.tipo === "reponer")).length} label="Para reponer" tone="info" />
           </div>
           <div className="filters">
             <input className="input grow" placeholder="Buscar por título, SKU o MLA…" value={q} onChange={(e) => setQ(e.target.value)} />
             <label className="chk"><input type="checkbox" checked={soloAlertas} onChange={(e) => setSoloAlertas(e.target.checked)} /> Solo con alertas</label>
             <label className="chk"><input type="checkbox" checked={soloCatalogo} onChange={(e) => setSoloCatalogo(e.target.checked)} /> Solo catálogo</label>
+            {viejas > 0 && <label className="chk"><input type="checkbox" checked={verViejas} onChange={(e) => setVerViejas(e.target.checked)} /> Ver {viejas} viejas/inactivas</label>}
           </div>
           <div className="pub-grid">
             {filtradas.map((p) => <PubCard key={p.ml_item_id} p={p} onOpen={() => setDetalle(p)} />)}

@@ -7,7 +7,7 @@ import type {
   Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
   Publicacion, PublicacionSugerencia,
 } from "./types.ts";
-import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw } from "./finanzas.ts";
+import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw } from "./finanzas.ts";
 
 export const connected = isConnected;
 
@@ -242,9 +242,34 @@ export const api = {
   },
   async productosRaw(): Promise<ProdRaw[]> {
     if (!connected) return [];
-    const { data, error } = await supabase!.from("productos").select("sku, nombre, costo, precio, tipo");
+    const { data, error } = await supabase!.from("productos").select("id, sku, nombre, costo, precio, tipo");
     if (error) throw error;
     return (data as ProdRaw[]) ?? [];
+  },
+  async productoFinanzasAll(): Promise<ProductoFinRaw[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!.from("producto_finanzas").select("*");
+    if (error) throw error;
+    return (data as ProductoFinRaw[]) ?? [];
+  },
+  async comisionesSku(): Promise<{ sku: string; comision_pct: number }[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!.from("publicaciones").select("sku, comision_pct").not("comision_pct", "is", null);
+    if (error) throw error;
+    return ((data as { sku: string; comision_pct: number }[]) ?? []).filter((r) => r.sku);
+  },
+  async guardarFinanzasConfig(config: Partial<FinanzasConfig>): Promise<void> {
+    if (!connected) return;
+    await callFn("finanzas-guardar", { accion: "config", config });
+  },
+  async guardarProductoFinanzas(producto_id: string, datos: { proveedor?: string | null; precio_compra?: number | null; condicion_pago_dias?: number; tasa_financiacion?: number }): Promise<void> {
+    if (!connected) return;
+    await callFn("finanzas-guardar", { accion: "producto", producto_id, datos });
+  },
+  async productoFinanzas(producto_id: string): Promise<ProductoFinRaw | null> {
+    if (!connected) return null;
+    const { data } = await supabase!.from("producto_finanzas").select("*").eq("producto_id", producto_id).maybeSingle();
+    return (data as ProductoFinRaw) ?? null;
   },
 
   // Sube una foto de devolución al storage y devuelve la URL pública.

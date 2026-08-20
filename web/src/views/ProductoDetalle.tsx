@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { StockConsolidado } from "../lib/types.ts";
 
@@ -25,6 +25,33 @@ export function ProductoDetalle({ producto, onClose, onSaved, notify }: {
   const [min, setMin] = useState<number>(s.stock_minimo ?? 0);
   const [saving, setSaving] = useState(false);
   const dirty = min !== (s.stock_minimo ?? 0);
+
+  // Parámetros financieros del producto (para el ciclo de caja). Solo base local.
+  const [fin, setFin] = useState({ proveedor: "", precio_compra: "", condicion_pago_dias: "0", tasa_financiacion: "" });
+  const [finBusy, setFinBusy] = useState(false);
+  useEffect(() => {
+    api.productoFinanzas(s.producto_id).then((pf) => {
+      if (pf) setFin({
+        proveedor: pf.proveedor ?? "",
+        precio_compra: pf.precio_compra != null ? String(pf.precio_compra) : "",
+        condicion_pago_dias: String(pf.condicion_pago_dias ?? 0),
+        tasa_financiacion: pf.tasa_financiacion ? String(pf.tasa_financiacion) : "",
+      });
+    }).catch(() => {});
+  }, [s.producto_id]);
+  async function guardarFin() {
+    setFinBusy(true);
+    try {
+      await api.guardarProductoFinanzas(s.producto_id, {
+        proveedor: fin.proveedor.trim() || null,
+        precio_compra: fin.precio_compra ? Number(fin.precio_compra) : null,
+        condicion_pago_dias: Number(fin.condicion_pago_dias) || 0,
+        tasa_financiacion: Number(fin.tasa_financiacion) || 0,
+      });
+      notify(`Datos financieros de ${s.sku} guardados`);
+    } catch (e) { notify("No se pudo guardar: " + (e as Error).message); }
+    finally { setFinBusy(false); }
+  }
 
   async function guardar() {
     setSaving(true);
@@ -107,6 +134,32 @@ export function ProductoDetalle({ producto, onClose, onSaved, notify }: {
             Estado actual: <b>{s.estado === "ok" ? "OK" : s.estado === "reponer" ? "por reponer" : "sin stock"}</b>.
             {" "}Costo unitario: <b className="mono">${(s.costo || 0).toLocaleString("es-AR")}</b> · Valor en stock: <b className="mono">${valorCosto.toLocaleString("es-AR")}</b>.
           </p>
+        </div>
+
+        <div className="det-block">
+          <h4>Condición de compra (para Finanzas)</h4>
+          <p className="muted" style={{ fontSize: ".76rem", marginTop: 0, marginBottom: 10 }}>
+            Estos datos no van a Contabilium: quedan en la base y alimentan el ciclo de caja y el capital requerido del módulo Finanzas.
+          </p>
+          <div className="pf-editor">
+            <div className="row2">
+              <div className="field" style={{ marginBottom: 0 }}><label>Proveedor</label>
+                <input className="input" value={fin.proveedor} onChange={(e) => setFin({ ...fin, proveedor: e.target.value })} placeholder="Maty, LBS…" /></div>
+              <div className="field" style={{ marginBottom: 0 }}><label>Precio de compra (unit.)</label>
+                <input className="input" type="number" value={fin.precio_compra} onChange={(e) => setFin({ ...fin, precio_compra: e.target.value })} placeholder={String(s.costo || 0)} /></div>
+            </div>
+            <div className="row2">
+              <div className="field" style={{ marginBottom: 0 }}><label>Condición de pago</label>
+                <select className="select" value={fin.condicion_pago_dias} onChange={(e) => setFin({ ...fin, condicion_pago_dias: e.target.value })}>
+                  <option value="0">Contado</option><option value="30">30 días</option><option value="60">60 días</option><option value="90">90 días</option>
+                </select></div>
+              <div className="field" style={{ marginBottom: 0 }}><label>Tasa financiación anual %</label>
+                <input className="input" type="number" step="0.1" value={fin.tasa_financiacion} onChange={(e) => setFin({ ...fin, tasa_financiacion: e.target.value })} placeholder="opcional" /></div>
+            </div>
+            <button className="btn primary" style={{ marginTop: 10 }} onClick={guardarFin} disabled={finBusy}>
+              {finBusy ? "Guardando…" : "Guardar datos financieros"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

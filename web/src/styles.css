@@ -570,3 +570,35 @@ button.pub-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-li
 .matriz-d { font-size: .84rem; color: var(--ink-soft); margin: 4px 0; }
 .matriz-act { font-size: .84rem; font-weight: 650; color: var(--accent); margin-bottom: 10px; }
 .matriz-items { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Finanzas — gráficos */
+.mes-bars { display: flex; align-items: flex-end; gap: 10px; height: 140px; padding-top: 8px; }
+.mes-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; }
+.mes-track { flex: 1; width: 100%; max-width: 46px; display: flex; align-items: flex-end; }
+.mes-track i { width: 100%; background: linear-gradient(180deg, var(--accent), var(--cyan)); border-radius: 5px 5px 0 0; min-height: 2px; transition: height .3s; }
+.mes-lbl { font-size: .72rem; color: var(--ink-soft); text-transform: capitalize; }
+
+.wf { display: flex; flex-direction: column; gap: 7px; }
+.wf-row { display: grid; grid-template-columns: 130px 1fr 120px; gap: 10px; align-items: center; }
+.wf-k { font-size: .84rem; color: var(--ink-soft); }
+.wf-track { height: 20px; background: var(--card-2); border-radius: 5px; position: relative; overflow: hidden; }
+.wf-track i { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+.wf-track i.wf-base { background: var(--accent); }
+.wf-track i.wf-total { background: var(--ok); }
+.wf-track i.wf-neg { background: color-mix(in srgb, var(--bad) 78%, transparent); }
+.wf-v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; font-size: .84rem; }
+
+.ciclo-bars { display: flex; flex-direction: column; gap: 8px; }
+.ciclo-row { display: grid; grid-template-columns: 180px 1fr 60px; gap: 10px; align-items: center; }
+.ciclo-name { font-size: .84rem; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ciclo-track { position: relative; height: 18px; background: var(--card-2); border-radius: 5px; }
+.ciclo-mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+.ciclo-track i { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
+.ciclo-track i.neg { background: var(--ok); }
+.ciclo-track i.pos { background: var(--warn); }
+.ciclo-v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; font-size: .82rem; }
+.ciclo-v.ok { color: var(--ok); } .ciclo-v.warn { color: var(--warn); }
+
+/* Editor de finanzas en el detalle de producto */
+.pf-editor { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--card-2); margin-top: 14px; }
+.pf-editor .row2 { margin-bottom: 8px; }

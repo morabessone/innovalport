@@ -19,9 +19,13 @@ export interface CompraDetalle {
   precio_unitario: number; cantidad: number; fecha_compra: string;
   condicion_pago_dias: number; tasa_financiacion: number;
 }
-export interface VentaRaw { fecha: string; origen: string | null; items: { sku: string; cantidad: number }[]; }
+export interface VentaRaw { fecha: string; origen: string | null; items: { sku: string; cantidad: number; monto?: number }[]; }
 export interface DevRaw { sku: string | null; cantidad: number; valor_perdida: number | null; estado: string; }
-export interface ProdRaw { sku: string; nombre: string; costo: number | null; precio: number | null; tipo: string; }
+export interface ProdRaw { id?: string; sku: string; nombre: string; costo: number | null; precio: number | null; tipo: string; }
+export interface ProductoFinRaw { producto_id: string; proveedor: string | null; precio_compra: number | null; condicion_pago_dias: number; tasa_financiacion: number; }
+// Datos extra para un cálculo más preciso (comisión real de ML por SKU y
+// parámetros financieros por producto editados a mano).
+export interface FinExtra { comisionSku?: Map<string, number>; prodFinSku?: Map<string, ProductoFinRaw>; }
 
 export interface FinProducto {
   sku: string; nombre: string; proveedor: string;
@@ -56,9 +60,11 @@ function canalDe(origen: string | null): "ml" | "tn" {
 
 export function calcularFinanzas(
   ventas: VentaRaw[], productos: ProdRaw[], compras: CompraDetalle[], devoluciones: DevRaw[],
-  cfg: FinanzasConfig, dias = 60,
+  cfg: FinanzasConfig, dias = 60, extra: FinExtra = {},
 ): FinResultado {
   const desde = Date.now() - dias * 86400_000;
+  const comisionSku = extra.comisionSku ?? new Map<string, number>();
+  const prodFinSku = extra.prodFinSku ?? new Map<string, ProductoFinRaw>();
   const prod = new Map<string, ProdRaw>();
   for (const p of productos) prod.set(low(p.sku), p);
 
@@ -91,14 +97,15 @@ export function calcularFinanzas(
   for (const v of ventas) {
     if (v.fecha && new Date(v.fecha).getTime() < desde) continue;
     const canal = canalDe(v.origen);
-    const comRate = canal === "tn" ? cfg.comision_tn : cfg.comision_ml;
     const diasCobro = canal === "tn" ? cfg.dias_cobro_tn : cfg.dias_cobro_ml;
     for (const it of v.items ?? []) {
       const k = low(it.sku); if (!k) continue;
       const p = prod.get(k);
-      const precio = Number(p?.precio || 0);
       const cant = Number(it.cantidad || 0);
-      const bruto = precio * cant;
+      // Importe REAL de Contabilium si está; si no, se estima con el precio de lista.
+      const bruto = Number(it.monto || 0) > 0 ? Number(it.monto) : Number(p?.precio || 0) * cant;
+      // Comisión REAL de ML por SKU (listing_prices) si está; si no, el promedio.
+      const comRate = canal === "tn" ? cfg.comision_tn : (comisionSku.get(k) ?? cfg.comision_ml);
       const a = acc.get(k) ?? { unidades: 0, bruto: 0, comision: 0, cobroPond: 0 };
       a.unidades += cant;
       a.bruto += bruto;
@@ -117,12 +124,24 @@ export function calcularFinanzas(
     const dev = devSku.get(k);
     const devCost = dev?.perdida ?? 0;
     const compra = comprasSku.get(k);
+    const pf = prodFinSku.get(k);   // parámetros por producto (editados a mano)
 
     const diasCobro = a.bruto > 0 ? a.cobroPond / a.bruto : (cfg.dias_cobro_ml);
-    const diasPago = compra && compra.monto > 0 ? compra.diasPond / compra.monto : null;
+    // Días de pago al proveedor: de las compras reales, o de los parámetros del
+    // producto si se cargaron a mano; si no hay ninguno, el ciclo queda sin dato.
+    let diasPago: number | null = null;
+    let base = cogs;
+    let tasa = cfg.tasa_anual;
+    if (compra && compra.monto > 0) {
+      diasPago = compra.diasPond / compra.monto;
+      base = compra.monto;
+      tasa = compra.tasaPond > 0 ? compra.tasaPond / compra.monto : cfg.tasa_anual;
+    } else if (pf) {
+      diasPago = Number(pf.condicion_pago_dias || 0);
+      base = pf.precio_compra ? Number(pf.precio_compra) * a.unidades : cogs;
+      tasa = pf.tasa_financiacion ? Number(pf.tasa_financiacion) / 100 : cfg.tasa_anual;
+    }
     const ciclo = diasPago != null ? Math.round(diasCobro - diasPago) : null;
-    const base = compra && compra.monto > 0 ? compra.monto : cogs;
-    const tasa = compra && compra.monto > 0 && compra.tasaPond > 0 ? compra.tasaPond / compra.monto : cfg.tasa_anual;
     const capital = ciclo != null && ciclo > 0 ? base * (ciclo / 30) : 0;
     const financiacion = capital > 0 ? (capital * tasa * ciclo!) / 365 : 0;
 
@@ -139,11 +158,11 @@ export function calcularFinanzas(
     }
 
     productosFin.push({
-      sku: p?.sku ?? k, nombre: p?.nombre ?? k, proveedor: compra?.proveedor || "Sin proveedor asignado",
+      sku: p?.sku ?? k, nombre: p?.nombre ?? k, proveedor: compra?.proveedor || pf?.proveedor || "Sin proveedor asignado",
       unidades: a.unidades, bruto: a.bruto, comision: a.comision, cogs,
       envio, devoluciones: devCost, financiacion,
       neto, margen, roi, ciclo, capital, autofinancia,
-      sinPrecio: a.bruto === 0, sinCompra: !compra,
+      sinPrecio: a.bruto === 0, sinCompra: !compra && !pf,
       cuadrante,
     });
   }

@@ -38,11 +38,16 @@ function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   const d = db();
-  const dry = new URL(req.url).searchParams.get("dry") === "1";
+  const url = new URL(req.url);
+  const dry = url.searchParams.get("dry") === "1";
+  const diasParam = Number(url.searchParams.get("dias") ?? 0) || 0;
+  const rebuild = url.searchParams.get("rebuild") === "1"; // re-procesa aunque ya exista (backfill de montos)
   try {
     const tok = await cbToken(d);
     const { data: est } = await d.from("sync_estado").select("ultima_ok").eq("job", "ventas").maybeSingle();
-    const desde = est?.ultima_ok ? new Date(new Date(est.ultima_ok).getTime() - 12 * 3600_000) : new Date(Date.now() - 3 * 86400_000);
+    const desde = diasParam > 0
+      ? new Date(Date.now() - diasParam * 86400_000)
+      : (est?.ultima_ok ? new Date(new Date(est.ultima_ok).getTime() - 12 * 3600_000) : new Date(Date.now() - 3 * 86400_000));
     const hasta = new Date(Date.now() + 86400_000);
     const comps: Record<string, any>[] = [];
     for (let page = 1; page <= 20; page++) {
@@ -68,23 +73,40 @@ Deno.serve(async (req) => {
       return json({ ok: true, dry: true, rango: [ymd(desde), ymd(hasta)], facturas: facturas.length, inventarios: Object.values(seen) });
     }
     const idset = facturas.map((c) => Number(c.Id));
-    const { data: ya } = await d.from("cb_ventas").select("cb_id").in("cb_id", idset.length ? idset : [0]);
+    // "Ya procesadas" = las que ya tienen el importe cargado (total>0). Así el
+    // backfill es auto-reparable: cada corrida completa las que faltan.
+    const { data: ya } = await d.from("cb_ventas").select("cb_id").gt("total", 0).in("cb_id", idset.length ? idset : [0]);
     const procesados = new Set((ya ?? []).map((r: any) => Number(r.cb_id)));
+    const maxProc = Number(url.searchParams.get("max") ?? 130) || 130; // cota de detalles por corrida
+    let procCount = 0;
     let registradas = 0, sinMapear = 0;
     const invSinMapear = new Set<number>();
+    let muestraItem: string[] | null = null;
+    // Importe de un ítem del comprobante (con IVA). Fallbacks por si cambian nombres.
+    const montoItem = (it: Record<string, any>): number => {
+      const cant = Number(it.Cantidad ?? 0);
+      const total = Number(it.Total ?? it.Importe ?? it.SubTotal ?? it.Subtotal ?? 0);
+      if (total > 0) return total;
+      const pu = Number(it.PrecioFinal ?? it.Precio ?? it.PrecioUnitario ?? it.ImporteUnitario ?? 0);
+      return pu * cant;
+    };
     for (const c of facturas) {
       const cbId = Number(c.Id);
-      if (procesados.has(cbId)) continue;
+      if (procesados.has(cbId) && !rebuild) continue;
+      if (procCount >= maxProc) break;
+      procCount++;
       const det = await cbGet(`/api/comprobantes/${cbId}`, tok);
       await sleep(60);
       const items = (det.Items ?? []) as Record<string, any>[];
+      if (!muestraItem && items[0]) muestraItem = Object.keys(items[0]);
       const invCb = Number(det.Inventario ?? 0);
       const dep = inv.get(invCb);
-      const norm = items.map((it) => ({ sku: String(it.Codigo ?? "").toLowerCase(), cantidad: Number(it.Cantidad ?? 0) }));
+      const norm = items.map((it) => ({ sku: String(it.Codigo ?? "").toLowerCase(), cantidad: Number(it.Cantidad ?? 0), monto: Math.round(montoItem(it)) }));
+      const totalVenta = norm.reduce((s, i) => s + i.monto, 0);
       if (dep && depId.has(dep)) registradas++; else { sinMapear++; if (invCb) invSinMapear.add(invCb); }
-      await d.from("cb_ventas").upsert({ cb_id: cbId, numero: String(det.Numero ?? ""), fecha: det.FechaEmision ?? c.FechaEmision, origen: String(det.Origen ?? c.Origen ?? ""), inventario_cb: invCb, items: norm, aplicado: false }, { onConflict: "cb_id" });
+      await d.from("cb_ventas").upsert({ cb_id: cbId, numero: String(det.Numero ?? ""), fecha: det.FechaEmision ?? c.FechaEmision, origen: String(det.Origen ?? c.Origen ?? ""), inventario_cb: invCb, items: norm, total: totalVenta, aplicado: false }, { onConflict: "cb_id" });
     }
-    await d.from("sync_estado").upsert({ job: "ventas", ultima_ok: new Date().toISOString() }, { onConflict: "job" });
-    return json({ ok: true, comprobantes: comps.length, facturas: facturas.length, registradas, sin_mapear: sinMapear, inv_sin_mapear: [...invSinMapear] });
+    if (!rebuild && !diasParam) await d.from("sync_estado").upsert({ job: "ventas", ultima_ok: new Date().toISOString() }, { onConflict: "job" });
+    return json({ ok: true, comprobantes: comps.length, facturas: facturas.length, procesadas: procCount, registradas, sin_mapear: sinMapear, muestra_item: muestraItem });
   } catch (e) { return json({ ok: false, error: String(e) }, 500); }
 });

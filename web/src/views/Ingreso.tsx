@@ -29,6 +29,10 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [tipo, setTipo] = useState("local");
   const [provsCB, setProvsCB] = useState<{ id: number; nombre: string }[]>([]);
   const [provCBId, setProvCBId] = useState("");   // IDProveedor de Contabilium
+  // Términos de compra (para el análisis financiero / ciclo de caja).
+  const [condPago, setCondPago] = useState("0");  // días; 0 = contado
+  const [fechaCompra, setFechaCompra] = useState(() => new Date().toISOString().slice(0, 10));
+  const [tasaFin, setTasaFin] = useState("");     // % anual si no es contado
   const [ingresoId, setIngresoId] = useState<string | null>(null);
   const [filas, setFilas] = useState<Fila[]>([]);
   const [reading, setReading] = useState(false);
@@ -112,12 +116,19 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
     if (!listos.length) return notify("Marcá al menos un producto completo");
     setSaving(true);
     try {
+      const proveedorNombre = provCBId ? (provsCB.find((p) => String(p.id) === provCBId)?.nombre ?? proveedor) : proveedor;
       await api.confirmarIngreso(ingresoId ?? "manual", destino, listos.map((f) => {
-        const base = { id: f.id.startsWith("man-") ? undefined : f.id, cantidad: f.cantidad };
+        const costoCompra = Number(f.costo || f.costo_unit || 0) || undefined;
+        const base = { id: f.id.startsWith("man-") ? undefined : f.id, cantidad: f.cantidad, costo_compra: costoCompra };
         if (f.modo === "existente") return { ...base, producto_id: f.producto_id!, aprender_alias: f.confianza < 0.9 ? f.descripcion : undefined };
         if (f.modo === "nuevo") return { ...base, nuevo: altaDe(f) };
         return { ...base, variante: { ...altaDe(f), base_producto_id: f.baseId! } };
-      }));
+      }), {
+        proveedor: proveedorNombre || null,
+        fecha_compra: fechaCompra,
+        condicion_pago_dias: Number(condPago) || 0,
+        tasa_financiacion: Number(tasaFin) || 0,
+      });
       const total = listos.reduce((a, f) => a + f.cantidad, 0);
       const nuevos = listos.filter((f) => f.modo !== "existente").length;
       setFilas([]); setIngresoId(null);
@@ -165,6 +176,29 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
             {deps.map((d) => <option key={d.id} value={d.id}>{d.codigo} · {d.nombre}</option>)}
           </select>
         </div>
+
+        {/* Términos de compra → alimentan el ciclo de caja del módulo Finanzas */}
+        <div className="row2">
+          <div className="field">
+            <label>Condición de pago</label>
+            <select className="select" value={condPago} onChange={(e) => setCondPago(e.target.value)}>
+              <option value="0">Contado</option>
+              <option value="30">30 días</option>
+              <option value="60">60 días</option>
+              <option value="90">90 días</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Fecha de compra</label>
+            <input className="input" type="date" value={fechaCompra} onChange={(e) => setFechaCompra(e.target.value)} />
+          </div>
+        </div>
+        {condPago !== "0" && (
+          <div className="field">
+            <label>Tasa de financiación anual (%) <span className="muted">— opcional</span></label>
+            <input className="input" type="number" step="0.1" value={tasaFin} onChange={(e) => setTasaFin(e.target.value)} placeholder="ej: 40" />
+          </div>
+        )}
 
         <input ref={fileRef} type="file" accept="image/*" hidden
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />

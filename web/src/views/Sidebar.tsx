@@ -3,7 +3,8 @@ import { useState } from "react";
 export type Section =
   | "home"
   | "panel" | "reponer" | "ingreso" | "movimiento" | "devoluciones" | "inventario" | "historial"
-  | "pub_activas" | "pub_pendientes" | "pub_optim";
+  | "pub_activas" | "pub_pendientes" | "pub_optim"
+  | "fin_resumen" | "fin_producto" | "fin_proveedor" | "fin_capital" | "fin_matriz";
 
 const STOCK_TABS: { id: Section; label: string }[] = [
   { id: "panel", label: "Panel" },
@@ -19,16 +20,26 @@ const PUB_TABS: { id: Section; label: string }[] = [
   { id: "pub_pendientes", label: "Pendientes" },
   { id: "pub_optim", label: "Optimizaciones" },
 ];
+const FIN_TABS: { id: Section; label: string }[] = [
+  { id: "fin_resumen", label: "Rentabilidad" },
+  { id: "fin_producto", label: "Por producto" },
+  { id: "fin_proveedor", label: "Por proveedor" },
+  { id: "fin_capital", label: "Capital de trabajo" },
+  { id: "fin_matriz", label: "Matriz de decisión" },
+];
 
 const STOCK_IDS = STOCK_TABS.map((t) => t.id);
 const PUB_IDS = PUB_TABS.map((t) => t.id);
+const FIN_IDS = FIN_TABS.map((t) => t.id);
 
 // Menú lateral: Inicio + dos grupos desplegables (Central de Stock y Publicaciones).
 export function Sidebar({ section, onNavigate }: { section: Section; onNavigate: (s: Section) => void }) {
   const inStock = STOCK_IDS.includes(section);
   const inPub = PUB_IDS.includes(section);
+  const inFin = FIN_IDS.includes(section);
   const [openStock, setOpenStock] = useState(true);
   const [openPub, setOpenPub] = useState(true);
+  const [openFin, setOpenFin] = useState(true);
 
   return (
     <nav className="sidebar-nav" aria-label="Navegación principal">
@@ -60,6 +71,21 @@ export function Sidebar({ section, onNavigate }: { section: Section; onNavigate:
         {openPub && (
           <div className="side-subs">
             {PUB_TABS.map((t) => (
+              <button key={t.id} className={"side-sub" + (section === t.id ? " active" : "")} onClick={() => onNavigate(t.id)}>{t.label}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="side-group">
+        <button className={"side-item side-parent" + (inFin ? " on" : "")} onClick={() => setOpenFin((v) => !v)} aria-expanded={openFin}>
+          <span className="side-ico" aria-hidden="true">💰</span>
+          <span className="side-label">Finanzas</span>
+          <span className={"side-chev" + (openFin ? " open" : "")} aria-hidden="true">▸</span>
+        </button>
+        {openFin && (
+          <div className="side-subs">
+            {FIN_TABS.map((t) => (
               <button key={t.id} className={"side-sub" + (section === t.id ? " active" : "")} onClick={() => onNavigate(t.id)}>{t.label}</button>
             ))}
           </div>

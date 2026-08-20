@@ -12,6 +12,7 @@ import { Historial } from "./views/Historial.tsx";
 import { Login } from "./views/Login.tsx";
 import { Home } from "./views/Home.tsx";
 import { Publicaciones, type PubTab } from "./views/Publicaciones.tsx";
+import { Finanzas, type FinTab } from "./views/Finanzas.tsx";
 import { Sidebar, type Section } from "./views/Sidebar.tsx";
 
 type Theme = "auto" | "light" | "dark";
@@ -28,9 +29,17 @@ const SECTION_TITLE: Record<Section, string> = {
   pub_activas: "Publicaciones",
   pub_pendientes: "Publicaciones",
   pub_optim: "Publicaciones",
+  fin_resumen: "Finanzas",
+  fin_producto: "Finanzas",
+  fin_proveedor: "Finanzas",
+  fin_capital: "Finanzas",
+  fin_matriz: "Finanzas",
 };
 const PUB_SUBTAB: Partial<Record<Section, PubTab>> = {
   pub_activas: "activas", pub_pendientes: "pendientes", pub_optim: "optim",
+};
+const FIN_SUBTAB: Partial<Record<Section, FinTab>> = {
+  fin_resumen: "resumen", fin_producto: "producto", fin_proveedor: "proveedor", fin_capital: "capital", fin_matriz: "matriz",
 };
 
 const THEME_NEXT: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };
@@ -159,7 +168,7 @@ export function App() {
         </aside>
 
         <main className="content">
-          {section === "home" && <Home email={identity} onOpen={(t) => setSection(t === "publicaciones" ? "pub_activas" : "panel")} />}
+          {section === "home" && <Home email={identity} onOpen={(t) => setSection(t === "publicaciones" ? "pub_activas" : t === "finanzas" ? "fin_resumen" : "panel")} />}
           {section === "panel" && <Panel notify={notify} />}
           {section === "reponer" && <Reponer notify={notify} />}
           {section === "ingreso" && <Ingreso notify={notify} />}
@@ -168,6 +177,7 @@ export function App() {
           {section === "inventario" && <Inventario notify={notify} />}
           {section === "historial" && <Historial />}
           {PUB_SUBTAB[section] && <Publicaciones subtab={PUB_SUBTAB[section]!} notify={notify} />}
+          {FIN_SUBTAB[section] && <Finanzas subtab={FIN_SUBTAB[section]!} notify={notify} />}
         </main>
       </div>
 

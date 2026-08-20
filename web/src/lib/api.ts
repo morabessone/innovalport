@@ -7,6 +7,7 @@ import type {
   Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
   Publicacion, PublicacionSugerencia,
 } from "./types.ts";
+import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw } from "./finanzas.ts";
 
 export const connected = isConnected;
 
@@ -116,13 +117,16 @@ export const api = {
 
   async confirmarIngreso(ingresoId: string, destino: string, items: {
     id?: string; producto_id?: string | null; cantidad: number; aprender_alias?: string;
+    costo_compra?: number;
     nuevo?: AltaProducto;
     variante?: AltaProducto & { base_producto_id: string };
-  }[]) {
+  }[], compra?: {
+    proveedor: string | null; fecha_compra: string; condicion_pago_dias: number; tasa_financiacion: number;
+  }) {
     if (!connected) return demo.confirmarIngreso(destino, items.filter((i) => i.producto_id).map((i) => ({ id: i.id, producto_id: i.producto_id!, cantidad: i.cantidad })));
     await callFn("acciones", {
       accion: "confirmar_ingreso",
-      payload: { ingreso_id: ingresoId, deposito_destino_id: destino, items },
+      payload: { ingreso_id: ingresoId, deposito_destino_id: destino, items, compra },
     });
   },
 
@@ -216,6 +220,31 @@ export const api = {
   async sugerirPublicacion(producto_id?: string): Promise<void> {
     if (!connected) return;
     await callFn("publicacion-sugerir", producto_id ? { producto_id } : { limit: 6 });
+  },
+
+  // ---- Finanzas (lectura de datos crudos; el cálculo va en el cliente) ----
+  async finanzasConfig(): Promise<FinanzasConfig | null> {
+    if (!connected) return null;
+    const { data } = await supabase!.from("finanzas_config").select("*").eq("id", 1).maybeSingle();
+    return (data as FinanzasConfig) ?? null;
+  },
+  async comprasDetalle(): Promise<CompraDetalle[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!.from("compras_detalle").select("*").order("fecha_compra", { ascending: false });
+    if (error) throw error;
+    return (data as CompraDetalle[]) ?? [];
+  },
+  async ventasRaw(): Promise<VentaRaw[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!.from("cb_ventas").select("fecha, origen, items").order("fecha", { ascending: false }).limit(3000);
+    if (error) throw error;
+    return (data as VentaRaw[]) ?? [];
+  },
+  async productosRaw(): Promise<ProdRaw[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!.from("productos").select("sku, nombre, costo, precio, tipo");
+    if (error) throw error;
+    return (data as ProdRaw[]) ?? [];
   },
 
   // Sube una foto de devolución al storage y devuelve la URL pública.

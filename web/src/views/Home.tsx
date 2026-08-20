@@ -1,6 +1,6 @@
 // Dashboard de Inicio: la grilla de herramientas internas. Por ahora la única
 // activa es Central de Stock; Publicaciones queda deshabilitada (Próximamente).
-export function Home({ email, onOpen }: { email: string | null; onOpen: (tool: "stock" | "publicaciones") => void }) {
+export function Home({ email, onOpen }: { email: string | null; onOpen: (tool: "stock" | "publicaciones" | "finanzas") => void }) {
   return (
     <div className="home">
       <div className="home-hero">
@@ -24,6 +24,13 @@ export function Home({ email, onOpen }: { email: string | null; onOpen: (tool: "
           <div className="tool-top"><span className="tool-ico">🏷️</span></div>
           <h3>Publicaciones</h3>
           <p>Publicaciones de Mercado Libre con métricas, alertas y sugerencias de precio; borradores SEO para lo que falta publicar.</p>
+          <span className="tool-cta">Abrir <span aria-hidden="true">→</span></span>
+        </button>
+
+        <button className="tool tool-active" onClick={() => onOpen("finanzas")}>
+          <div className="tool-top"><span className="tool-ico">💰</span></div>
+          <h3>Finanzas</h3>
+          <p>Rentabilidad neta por producto y proveedor, ciclo de caja y capital de trabajo: qué comprar, cuánto invertir y cuánto ganás de verdad.</p>
           <span className="tool-cta">Abrir <span aria-hidden="true">→</span></span>
         </button>
       </div>

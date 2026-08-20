@@ -172,7 +172,8 @@ async function confirmarIngreso(db: DB, p: Record<string, unknown>, actor: strin
   const ingresoId = String(p.ingreso_id);
   const destino = String(p.deposito_destino_id);
   const items = (p.items ?? []) as Record<string, any>[];
-  const confirmados: { producto_id: string; cantidad: number; id?: string; aprender_alias?: string }[] = [];
+  const compra = (p.compra ?? null) as Record<string, any> | null;
+  const confirmados: { producto_id: string; cantidad: number; id?: string; aprender_alias?: string; costo_compra?: number }[] = [];
   let creados = 0;
   for (const it of items) {
     if (!(Number(it.cantidad) > 0)) continue;
@@ -180,7 +181,7 @@ async function confirmarIngreso(db: DB, p: Record<string, unknown>, actor: strin
     const pid = await resolverProducto(db, it, actor);
     if (!pid) continue;
     if (nuevoFlag) creados++;
-    confirmados.push({ producto_id: pid, cantidad: Number(it.cantidad), id: it.id, aprender_alias: it.aprender_alias });
+    confirmados.push({ producto_id: pid, cantidad: Number(it.cantidad), id: it.id, aprender_alias: it.aprender_alias, costo_compra: it.costo_compra != null ? Number(it.costo_compra) : undefined });
   }
   if (!confirmados.length) throw new Error("no hay renglones con producto asignado");
   for (const it of confirmados) {
@@ -195,6 +196,26 @@ async function confirmarIngreso(db: DB, p: Record<string, unknown>, actor: strin
     await db.from("ingresos").update({ estado: "confirmado", deposito_destino_id: destino, confirmado_at: new Date().toISOString() }).eq("id", ingresoId);
   }
   const remito = await crearRemito(db, "ingreso", null, destino, confirmados.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })), actor, ingresoId && ingresoId !== "manual" ? { tabla: "ingresos", id: ingresoId } : undefined);
+
+  // Registrar la compra por línea (para el análisis financiero / ciclo de caja).
+  if (compra) {
+    const cond = Number(compra.condicion_pago_dias ?? 0) || 0;
+    const fCompra = String(compra.fecha_compra ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const fPago = new Date(new Date(fCompra + "T00:00:00Z").getTime() + cond * 86400_000).toISOString().slice(0, 10);
+    for (const it of confirmados) {
+      const { data: prod } = await db.from("productos").select("sku, costo").eq("id", it.producto_id).maybeSingle();
+      const precioUnit = it.costo_compra ?? Number(prod?.costo ?? 0) ?? 0;
+      await db.from("compras_detalle").insert({
+        ingreso_id: ingresoId && ingresoId !== "manual" ? ingresoId : null,
+        producto_id: it.producto_id, sku: prod?.sku ?? null,
+        proveedor: compra.proveedor ?? null,
+        precio_unitario: precioUnit, cantidad: it.cantidad,
+        fecha_compra: fCompra, condicion_pago_dias: cond,
+        fecha_pago_programada: fPago, tasa_financiacion: Number(compra.tasa_financiacion ?? 0) || 0,
+      }).then(() => {}, () => {});
+    }
+  }
+
   await audit(db, "ingreso", remito.id, "confirmado", { destino, items: confirmados, creados }, actor);
   return { ok: true, remito, alta: confirmados.length, productos_nuevos: creados };
 }

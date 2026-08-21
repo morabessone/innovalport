@@ -42,9 +42,9 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   async function cargar() {
     setLoading(true);
     try {
-      const [config, ventas, prds, compras, devs, comis, prodFin, ordenes, ads] = await Promise.all([
+      const [config, ventas, prds, compras, devs, comis, prodFin, ordenes, ads, flex] = await Promise.all([
         api.finanzasConfig(), api.ventasRaw(), api.productosRaw(), api.comprasDetalle(), api.devoluciones(),
-        api.comisionesSku(), api.productoFinanzasAll(), api.mlOrdenes(), api.adsSku(30),
+        api.comisionesSku(), api.productoFinanzasAll(), api.mlOrdenes(), api.adsSku(30), api.flexSku(periodo),
       ]);
       const c: FinanzasConfig = { ...CFG_DEFAULT, ...(config ?? {}) };
       setCfg(c); setProds(prds);
@@ -56,7 +56,7 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       // Datos reales de Mercado Libre por SKU (comisión, logística) + inversión en ads.
       const { feeRealSku, envioRealSku } = mapsDeOrdenes(ordenes, periodo);
       setAcred(resumenAcreditacion(ordenes, periodo, c.dias_acreditacion_ml ?? 7));
-      setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku, feeRealSku, envioRealSku, adsSku: ads }));
+      setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku, feeRealSku, envioRealSku, adsSku: ads, flexRealSku: flex }));
 
       // Serie mensual de facturación (últimos 6 meses).
       const now = new Date();
@@ -84,9 +84,9 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   async function sincronizarML() {
     setSyncing(true);
     try {
-      notify("Sincronizando órdenes y ads de Mercado Libre… puede tardar.");
-      await Promise.all([api.syncMlOrdenes(periodo), api.syncMlAds(30)]);
-      notify("Datos de Mercado Libre actualizados");
+      notify("Sincronizando Mercado Libre y Flexit… puede tardar.");
+      await Promise.all([api.syncMlOrdenes(periodo), api.syncMlAds(30), api.syncFlexit(periodo)]);
+      notify("Datos de Mercado Libre y Flexit actualizados");
       await cargar();
     } catch (e) { notify("Error al sincronizar ML: " + (e as Error).message); }
     finally { setSyncing(false); }
@@ -97,7 +97,7 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       <div><span className="eyebrow">Finanzas</span><h2>{TITULOS[subtab][0]}</h2><p className="muted">{TITULOS[subtab][1]}</p></div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {subtab === "proyeccion" && <button className="btn primary" onClick={() => setProyModal(true)}>＋ Proyección</button>}
-        {(subtab === "capital" || subtab === "resumen") && <button className="btn" onClick={sincronizarML} disabled={syncing} title="Trae órdenes (acreditación, envío, comisión real) e inversión de ads de Mercado Libre">{syncing ? "Sincronizando…" : "🔄 Sincronizar ML"}</button>}
+        {(subtab === "capital" || subtab === "resumen") && <button className="btn" onClick={sincronizarML} disabled={syncing} title="Trae órdenes (acreditación, envío, comisión real), ads de Mercado Libre y costo real de envío Flex (Flexit)">{syncing ? "Sincronizando…" : "🔄 Sincronizar ML + Flexit"}</button>}
         <select className="select" style={{ width: "auto" }} value={periodo} onChange={(e) => setPeriodo(Number(e.target.value))}>
           <option value={30}>Últimos 30 días</option>
           <option value={60}>Últimos 60 días</option>
@@ -434,7 +434,7 @@ function ProductoDrawer({ p, cfg, productoId, costoCB, onClose, onSaved, notify 
     { k: "Comisión marketplace" + (p.comisionReal ? " (real ML)" : ""), v: p.comision },
     { k: "Costo de mercadería (COGS)", v: p.cogs },
     { k: "Envío Full" + (p.envioReal ? " (real ML)" : ""), v: p.envioFull },
-    { k: "Envío Flex (manual)", v: p.envioFlex },
+    { k: "Envío Flex" + (p.flexReal ? " (real Flexit)" : " (manual)"), v: p.envioFlex },
     { k: "Publicidad (Mercado Ads)", v: p.ads },
     { k: "Percepciones / impuestos", v: p.percepciones },
     { k: "Financiación MP", v: p.financiacionMp },
@@ -874,6 +874,17 @@ function SimuladorModal({ cfg, prods, onClose }: { cfg: FinanzasConfig; prods: P
     envioUnit: Number(f.envio) || 0, percepcionesPct: (Number(f.impuestos) || 0) / 100, costoUnit: Number(f.costo) || 0,
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  // Cotización real de Flexit por dirección (para el envío Flex).
+  const [cot, setCot] = useState({ direccion: "", localidad: "", provincia: "", busy: false, res: "" });
+  async function cotizar() {
+    if (!cot.localidad || !cot.provincia) { setCot({ ...cot, res: "Completá localidad y provincia" }); return; }
+    setCot({ ...cot, busy: true, res: "" });
+    try {
+      const r = await api.cotizarFlexit(cot.direccion || cot.localidad, cot.localidad, cot.provincia);
+      if (r.costo > 0) { setF((s) => ({ ...s, envio: String(r.costo) })); setCot((c) => ({ ...c, busy: false, res: `Flexit: ${money(r.costo)}${r.zonas?.[0]?.descripcion ? " · " + r.zonas[0].descripcion : ""}` })); }
+      else setCot((c) => ({ ...c, busy: false, res: "Sin cotización para esa dirección" }));
+    } catch (e) { setCot((c) => ({ ...c, busy: false, res: "Error: " + (e as Error).message })); }
+  }
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(620px,100%)" }}>
@@ -897,6 +908,17 @@ function SimuladorModal({ cfg, prods, onClose }: { cfg: FinanzasConfig; prods: P
           <div className="field"><label>Impuestos / percepciones %</label><input className="input" type="number" step="0.1" value={f.impuestos} onChange={set("impuestos")} /></div>
         </div>
         <div className="field"><label>Unidades</label><input className="input" type="number" value={f.unidades} onChange={set("unidades")} /></div>
+
+        <div className="fin-sep">Cotizar envío Flex (Flexit) <span className="muted" style={{ fontWeight: 400 }}>— completa el costo de envío</span></div>
+        <div className="row2">
+          <div className="field" style={{ marginBottom: 0 }}><label>Localidad</label><input className="input" value={cot.localidad} onChange={(e) => setCot({ ...cot, localidad: e.target.value })} placeholder="CABA" /></div>
+          <div className="field" style={{ marginBottom: 0 }}><label>Provincia</label><input className="input" value={cot.provincia} onChange={(e) => setCot({ ...cot, provincia: e.target.value })} placeholder="Buenos Aires" /></div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+          <input className="input grow" value={cot.direccion} onChange={(e) => setCot({ ...cot, direccion: e.target.value })} placeholder="Dirección (opcional)" />
+          <button className="btn" onClick={cotizar} disabled={cot.busy}>{cot.busy ? "Cotizando…" : "Cotizar Flexit"}</button>
+        </div>
+        {cot.res && <p className="faint" style={{ fontSize: ".78rem", marginTop: 4 }}>{cot.res}</p>}
 
         <div className="card card-pad" style={{ marginTop: 4 }}>
           <PlRow k="Precio de venta" v={money(sim.bruto)} />

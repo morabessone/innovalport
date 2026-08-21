@@ -304,6 +304,28 @@ export const api = {
     return callFn(`ml-ads-sync?dias=${dias}`, {});
   },
 
+  // ---- Flexit (envío Flex): costo real por entrega + cotización ----
+  // Mapa sku → costo real total de envío Flex (Flexit) en el período.
+  async flexSku(dias = 60): Promise<Map<string, number>> {
+    const m = new Map<string, number>();
+    if (!connected) return m;
+    const desde = new Date(Date.now() - dias * 86400_000).toISOString();
+    const { data } = await supabase!.from("flexit_entregas").select("sku, costo, fecha").gte("fecha", desde).not("sku", "is", null);
+    for (const r of ((data as { sku: string; costo: number }[]) ?? [])) {
+      const k = String(r.sku).toLowerCase();
+      m.set(k, (m.get(k) ?? 0) + Number(r.costo || 0));
+    }
+    return m;
+  },
+  async syncFlexit(dias = 60): Promise<unknown> {
+    if (!connected) return null;
+    return callFn(`flexit-sync?dias=${dias}`, {});
+  },
+  async cotizarFlexit(direccion: string, localidad: string, provincia: string): Promise<{ costo: number; zonas: { descripcion: string; costo: number }[] }> {
+    if (!connected) return { costo: 0, zonas: [] };
+    return callFn("flexit-sync", { accion: "cotizar", direccion, localidad, provincia });
+  },
+
   // Sube una foto de devolución al storage y devuelve la URL pública.
   async subirFoto(file: File): Promise<string | null> {
     if (!connected || !supabase) return null;

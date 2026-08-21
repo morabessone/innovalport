@@ -95,6 +95,7 @@ export interface MlOrdenRaw {
 export interface Acreditacion {
   acreditado: number; pendiente: number; total: number;
   ordenes: number; ordenesAcred: number; estimado: boolean;
+  proximaLiberacion: string | null; montoProxima7d: number;
   porSku: Map<string, { acreditado: number; pendiente: number }>;
 }
 // Diferencia el capital YA disponible (acreditado por Mercado Pago) del que está
@@ -106,6 +107,8 @@ export function resumenAcreditacion(ordenes: MlOrdenRaw[], dias: number, lagDias
   const desde = Date.now() - dias * 86400_000;
   const porSku = new Map<string, { acreditado: number; pendiente: number }>();
   let acreditado = 0, pendiente = 0, ordenesAcred = 0, n = 0, estimadas = 0;
+  let proxima: number | null = null, montoProxima7d = 0;
+  const en7d = Date.now() + 7 * 86400_000;
   for (const o of ordenes) {
     if (o.fecha && new Date(o.fecha).getTime() < desde) continue;
     const est = String(o.pago_estado ?? "").toLowerCase();
@@ -121,10 +124,21 @@ export function resumenAcreditacion(ordenes: MlOrdenRaw[], dias: number, lagDias
       estimadas++;
     }
     if (acred) { acreditado += monto; cur.acreditado += monto; ordenesAcred++; }
-    else { pendiente += monto; cur.pendiente += monto; }
+    else {
+      pendiente += monto; cur.pendiente += monto;
+      // Próxima liberación real (money_release_date futuro).
+      if (o.fecha_acreditacion) {
+        const t = new Date(o.fecha_acreditacion).getTime();
+        if (t > Date.now()) { if (proxima == null || t < proxima) proxima = t; if (t <= en7d) montoProxima7d += monto; }
+      }
+    }
     if (k) porSku.set(k, cur);
   }
-  return { acreditado, pendiente, total: acreditado + pendiente, ordenes: n, ordenesAcred, estimado: estimadas > 0, porSku };
+  return {
+    acreditado, pendiente, total: acreditado + pendiente, ordenes: n, ordenesAcred,
+    estimado: estimadas > 0, proximaLiberacion: proxima != null ? new Date(proxima).toISOString() : null,
+    montoProxima7d, porSku,
+  };
 }
 // Construye los mapas de datos reales de ML por SKU a partir de ml_ordenes.
 export function mapsDeOrdenes(ordenes: MlOrdenRaw[], dias: number): {

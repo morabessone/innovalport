@@ -650,6 +650,12 @@ function Capital({ res, acred }: { res: FinResultado; acred: Acreditacion | null
             <Kpi label="% ya disponible" value={pct(acred.total > 0 ? acred.acreditado / acred.total : 0)} tone="ok" />
           </div>
           <AcredBar acreditado={acred.acreditado} pendiente={acred.pendiente} />
+          {acred.proximaLiberacion && (
+            <p className="muted" style={{ fontSize: ".8rem", marginTop: 10 }}>
+              Próxima liberación: <b>{new Date(acred.proximaLiberacion).toLocaleDateString("es-AR", { day: "numeric", month: "long" })}</b>
+              {acred.montoProxima7d > 0 && <> · se acreditan <b className="ok">{money(acred.montoProxima7d)}</b> en los próximos 7 días</>}.
+            </p>
+          )}
         </div>
       )}
 

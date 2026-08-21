@@ -40,6 +40,15 @@ async function mlGet(path: string, token: string): Promise<any | null> {
     return await r.json();
   } catch { return null; }
 }
+// La API de pagos vive en api.mercadopago.com (NO en api.mercadolibre.com). El
+// mismo token de ML del vendedor tiene acceso a sus propios pagos ahí.
+async function mpGet(path: string, token: string): Promise<any | null> {
+  try {
+    const r = await fetch("https://api.mercadopago.com" + path, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+    if (!r.ok) return { __status: r.status };
+    return await r.json();
+  } catch { return null; }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -75,9 +84,9 @@ Deno.serve(async (req) => {
     const rows: Record<string, any>[] = [];
     let vistas = 0, envioCalls = 0, mpCalls = 0, mpOk = 0;
     const maxEnvio = 70;   // tope de lookups de shipment por corrida (se completan de a poco)
-    // Los lookups a /v1/payments requieren scope de Mercado Pago (hoy el token de
-    // ML no lo tiene y devuelven error). Se activan con ?mp=1 cuando exista scope.
-    const maxMp = url.searchParams.get("mp") === "1" ? 150 : 0;
+    // Acreditación real desde Mercado Pago (api.mercadopago.com/v1/payments). El
+    // token de ML del vendedor tiene acceso. Activado por defecto; ?mp=0 lo apaga.
+    const maxMp = url.searchParams.get("mp") === "0" ? 0 : 150;
 
     paging:
     for (let offset = 0; offset < 2000; offset += 50) {
@@ -102,7 +111,7 @@ Deno.serve(async (req) => {
         let netoRecibido: number | null = null;
         if (paymentId && low(estado) === "approved" && !acredResuelto.has(orderId) && mpCalls < maxMp) {
           mpCalls++;
-          const pay = await mlGet(`/v1/payments/${paymentId}`, token);
+          const pay = await mpGet(`/v1/payments/${paymentId}`, token);
           if (pay && !pay.__status) {
             mpOk++;
             releaseDate = pay.money_release_date ?? releaseDate;

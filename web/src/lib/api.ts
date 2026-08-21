@@ -7,7 +7,7 @@ import type {
   Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
   Publicacion, PublicacionSugerencia,
 } from "./types.ts";
-import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw, MlOrdenRaw } from "./finanzas.ts";
+import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw, MlOrdenRaw, SimCategoria, SimPublicacion, SimFee } from "./finanzas.ts";
 
 export const connected = isConnected;
 
@@ -324,6 +324,19 @@ export const api = {
   async cotizarFlexit(direccion: string, localidad: string, provincia: string): Promise<{ costo: number; zonas: { descripcion: string; costo: number }[] }> {
     if (!connected) return { costo: 0, zonas: [] };
     return callFn("flexit-sync", { accion: "cotizar", direccion, localidad, provincia });
+  },
+
+  // ---- Simulador de costos de Mercado Libre (endpoints reales) ----
+  async simularBuscar(q: string): Promise<{ categorias: SimCategoria[]; publicaciones: SimPublicacion[] }> {
+    if (!connected) return { categorias: [], publicaciones: [] };
+    return callFn("ml-simular", { accion: "buscar", q });
+  },
+  async simularCostos(category_id: string, price: number, listing_type_id?: string): Promise<{ opciones: SimFee[]; elegido: SimFee | null }> {
+    if (!connected) return { opciones: [], elegido: null };
+    return callFn("ml-simular", { accion: "costos", category_id, price, listing_type_id });
+  },
+  async simularItem(item_id: string): Promise<{ item: SimPublicacion; costos: SimFee }> {
+    return callFn("ml-simular", { accion: "item", item_id });
   },
 
   // Sube una foto de devolución al storage y devuelve la URL pública.

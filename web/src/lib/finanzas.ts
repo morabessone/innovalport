@@ -87,6 +87,11 @@ export interface FinEmpresa {
 }
 export interface FinResultado { productos: FinProducto[]; proveedores: FinProveedor[]; empresa: FinEmpresa; }
 
+// Tipos del simulador de costos de Mercado Libre (edge fn ml-simular).
+export interface SimCategoria { category_id: string; category_name: string; domain_name: string; }
+export interface SimPublicacion { id: string; title: string; price: number; category_id: string; listing_type_id: string; thumbnail?: string; sku?: string | null; }
+export interface SimFee { sale_fee_amount: number; percentage_fee: number; fixed_fee: number; listing_type_id: string | null; listing_type_name: string | null; }
+
 // Órdenes de ML (tabla ml_ordenes) para acreditación y datos reales por SKU.
 export interface MlOrdenRaw {
   sku: string | null; fecha: string; monto: number; sale_fee: number;

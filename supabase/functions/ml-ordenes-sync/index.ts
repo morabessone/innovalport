@@ -79,8 +79,11 @@ Deno.serve(async (req) => {
       if (r.acreditado) acredResuelto.add(Number(r.order_id));
     }
 
-    const desde = new Date(Date.now() - dias * 86400_000).toISOString();
-    const hasta = new Date(Date.now() + 86400_000).toISOString();
+    // Ventana: por defecto los últimos `dias`; se puede fijar con ?from=&to= (ISO).
+    const fromP = url.searchParams.get("from");
+    const toP = url.searchParams.get("to");
+    const desde = fromP ? new Date(fromP).toISOString() : new Date(Date.now() - dias * 86400_000).toISOString();
+    const hasta = toP ? new Date(toP).toISOString() : new Date(Date.now() + 86400_000).toISOString();
     const rows: Record<string, any>[] = [];
     let vistas = 0, envioCalls = 0, mpCalls = 0, mpOk = 0;
     const maxEnvio = 70;   // tope de lookups de shipment por corrida (se completan de a poco)

@@ -14,6 +14,10 @@ create table if not exists flexit_entregas (
   codinterno  text,
   nro_guia    text,
   sku         text,                  -- resuelto por join nro_venta -> ml_ordenes (best effort)
+  localidad   text,
+  provincia   text,
+  cp          text,
+  fuente      text default 'api',    -- 'api' (flexit-sync) o 'excel' (carga manual)
   updated_at  timestamptz default now()
 );
 alter table flexit_entregas enable row level security;

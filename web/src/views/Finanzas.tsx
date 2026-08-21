@@ -3,6 +3,7 @@ import { api } from "../lib/api.ts";
 import {
   calcularFinanzas, simularML, resumenAcreditacion, mapsDeOrdenes,
   type FinResultado, type FinProducto, type FinanzasConfig, type ProdRaw, type Acreditacion,
+  type SimCategoria, type SimPublicacion, type SimFee,
 } from "../lib/finanzas.ts";
 
 export type FinTab = "resumen" | "producto" | "proveedor" | "capital" | "matriz" | "proyeccion";
@@ -31,6 +32,8 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   const [proyModal, setProyModal] = useState(false);
   const [acred, setAcred] = useState<Acreditacion | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [stockBySku, setStockBySku] = useState<Map<string, number>>(new Map());
+  const [velBySku, setVelBySku] = useState<Map<string, number>>(new Map());
 
   // Mapa sku(lower) → producto_id, para editar producto_finanzas desde el detalle.
   const prodIdBySku = useMemo(() => {
@@ -42,9 +45,9 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   async function cargar() {
     setLoading(true);
     try {
-      const [config, ventas, prds, compras, devs, comis, prodFin, ordenes, ads] = await Promise.all([
+      const [config, ventas, prds, compras, devs, comis, prodFin, ordenes, ads, flex, stock] = await Promise.all([
         api.finanzasConfig(), api.ventasRaw(), api.productosRaw(), api.comprasDetalle(), api.devoluciones(),
-        api.comisionesSku(), api.productoFinanzasAll(), api.mlOrdenes(), api.adsSku(30),
+        api.comisionesSku(), api.productoFinanzasAll(), api.mlOrdenes(), api.adsSku(30), api.flexSku(periodo), api.stock(),
       ]);
       const c: FinanzasConfig = { ...CFG_DEFAULT, ...(config ?? {}) };
       setCfg(c); setProds(prds);
@@ -56,7 +59,20 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       // Datos reales de Mercado Libre por SKU (comisión, logística) + inversión en ads.
       const { feeRealSku, envioRealSku } = mapsDeOrdenes(ordenes, periodo);
       setAcred(resumenAcreditacion(ordenes, periodo, c.dias_acreditacion_ml ?? 7));
-      setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku, feeRealSku, envioRealSku, adsSku: ads }));
+      // Stock disponible + velocidad de venta (u/día, últimos 90 días) por SKU.
+      const stMap = new Map<string, number>();
+      for (const s of stock) stMap.set(String(s.sku).toLowerCase(), Math.max(0, Number(s.total || 0)));
+      setStockBySku(stMap);
+      const desde90 = Date.now() - 90 * 86400_000;
+      const uCount = new Map<string, number>();
+      for (const v of ventas) {
+        if (!v.fecha || new Date(v.fecha).getTime() < desde90) continue;
+        for (const it of v.items ?? []) { const k = String(it.sku).toLowerCase(); uCount.set(k, (uCount.get(k) ?? 0) + Number(it.cantidad || 0)); }
+      }
+      const vel = new Map<string, number>();
+      for (const [k, u] of uCount) vel.set(k, u / 90);
+      setVelBySku(vel);
+      setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku, feeRealSku, envioRealSku, adsSku: ads, flexRealSku: flex }));
 
       // Serie mensual de facturación (últimos 6 meses).
       const now = new Date();
@@ -84,9 +100,9 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   async function sincronizarML() {
     setSyncing(true);
     try {
-      notify("Sincronizando órdenes y ads de Mercado Libre… puede tardar.");
-      await Promise.all([api.syncMlOrdenes(periodo), api.syncMlAds(30)]);
-      notify("Datos de Mercado Libre actualizados");
+      notify("Sincronizando Mercado Libre y Flexit… puede tardar.");
+      await Promise.all([api.syncMlOrdenes(periodo), api.syncMlAds(30), api.syncFlexit(periodo)]);
+      notify("Datos de Mercado Libre y Flexit actualizados");
       await cargar();
     } catch (e) { notify("Error al sincronizar ML: " + (e as Error).message); }
     finally { setSyncing(false); }
@@ -97,7 +113,7 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       <div><span className="eyebrow">Finanzas</span><h2>{TITULOS[subtab][0]}</h2><p className="muted">{TITULOS[subtab][1]}</p></div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {subtab === "proyeccion" && <button className="btn primary" onClick={() => setProyModal(true)}>＋ Proyección</button>}
-        {(subtab === "capital" || subtab === "resumen") && <button className="btn" onClick={sincronizarML} disabled={syncing} title="Trae órdenes (acreditación, envío, comisión real) e inversión de ads de Mercado Libre">{syncing ? "Sincronizando…" : "🔄 Sincronizar ML"}</button>}
+        {(subtab === "capital" || subtab === "resumen") && <button className="btn" onClick={sincronizarML} disabled={syncing} title="Trae órdenes (acreditación, envío, comisión real), ads de Mercado Libre y costo real de envío Flex (Flexit)">{syncing ? "Sincronizando…" : "🔄 Sincronizar ML + Flexit"}</button>}
         <select className="select" style={{ width: "auto" }} value={periodo} onChange={(e) => setPeriodo(Number(e.target.value))}>
           <option value={30}>Últimos 30 días</option>
           <option value={60}>Últimos 60 días</option>
@@ -118,7 +134,7 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       {subtab === "proveedor" && <PorProveedor res={res} />}
       {subtab === "capital" && <Capital res={res} acred={acred} />}
       {subtab === "matriz" && <Matriz res={res} cfg={cfg} />}
-      {subtab === "proyeccion" && <Proyeccion res={res} cfg={cfg} prods={prods} />}
+      {subtab === "proyeccion" && <Proyeccion res={res} cfg={cfg} prods={prods} stockBySku={stockBySku} velBySku={velBySku} />}
       <DataNote res={res} cfg={cfg} />
       {ajustes && <AjustesModal cfg={cfg} onClose={() => setAjustes(false)} onSaved={() => { setAjustes(false); cargar(); }} notify={notify} />}
       {detalle && (
@@ -434,7 +450,7 @@ function ProductoDrawer({ p, cfg, productoId, costoCB, onClose, onSaved, notify 
     { k: "Comisión marketplace" + (p.comisionReal ? " (real ML)" : ""), v: p.comision },
     { k: "Costo de mercadería (COGS)", v: p.cogs },
     { k: "Envío Full" + (p.envioReal ? " (real ML)" : ""), v: p.envioFull },
-    { k: "Envío Flex (manual)", v: p.envioFlex },
+    { k: "Envío Flex" + (p.flexReal ? " (real Flexit)" : " (manual)"), v: p.envioFlex },
     { k: "Publicidad (Mercado Ads)", v: p.ads },
     { k: "Percepciones / impuestos", v: p.percepciones },
     { k: "Financiación MP", v: p.financiacionMp },
@@ -776,79 +792,120 @@ function Matriz({ res, cfg }: { res: FinResultado; cfg: FinanzasConfig }) {
   );
 }
 
-// ---- Proyección: elegir SKU(s) y ver ganancia proyectada por venta ----
-function Proyeccion({ res, cfg, prods }: { res: FinResultado; cfg: FinanzasConfig; prods: ProdRaw[] }) {
+// ---- Proyección: elegir SKU(s) y proyectar la ganancia del stock disponible ----
+type Horizonte = "stock" | "15" | "30" | "60" | "90";
+function Proyeccion({ res, cfg, prods, stockBySku, velBySku }: {
+  res: FinResultado; cfg: FinanzasConfig; prods: ProdRaw[];
+  stockBySku: Map<string, number>; velBySku: Map<string, number>;
+}) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
+  const [hor, setHor] = useState<Horizonte>("stock");
   const finBySku = useMemo(() => new Map(res.productos.map((p) => [p.sku.toLowerCase(), p])), [res.productos]);
-  const lista = prods.filter((p) => p.tipo === "P" || true).filter((p) => q ? `${p.nombre} ${p.sku}`.toLowerCase().includes(q.toLowerCase()) : true).slice(0, 200);
+  const lista = prods.filter((p) => q ? `${p.nombre} ${p.sku}`.toLowerCase().includes(q.toLowerCase()) : true).slice(0, 300);
 
-  function toggle(sku: string) {
-    const n = new Set(sel); n.has(sku) ? n.delete(sku) : n.add(sku); setSel(n);
+  function toggle(sku: string) { const n = new Set(sel); n.has(sku) ? n.delete(sku) : n.add(sku); setSel(n); }
+  const selAll = () => setSel(new Set(lista.map((p) => p.sku)));
+  const selNone = () => setSel(new Set());
+
+  // Ganancia neta por unidad de un SKU: usa la economía REAL reciente
+  // (neto/unidades del período, que ya trae comisión/envío/ads reales); si el SKU
+  // no tuvo ventas, cae al simulador con los parámetros de Ajustes.
+  function netoUnit(sku: string, precio: number, costoUnit: number): number {
+    const fin = finBySku.get(sku.toLowerCase());
+    if (fin && fin.unidades > 0 && fin.bruto > 0) return fin.neto / fin.unidades;
+    const comPct = cfg.comision_ml;
+    const sim = simularML({ precio, unidades: 1, comisionPct: comPct, cuotasPct: 0, envioUnit: cfg.envio_full_default || cfg.costo_envio_default || 0, percepcionesPct: cfg.percepciones_pct || 0, costoUnit });
+    return sim.ganancia;
   }
 
-  // Para cada SKU seleccionado, proyectamos UNA venta a precio de lista con los
-  // costos del modelo (comisión real si existe, si no config; ML por defecto).
   const filas = [...sel].map((sku) => {
     const p = prods.find((x) => x.sku === sku)!;
-    const fin = finBySku.get(sku.toLowerCase());
+    const k = sku.toLowerCase();
+    const fin = finBySku.get(k);
     const precio = Number(p.precio || 0);
     const costoUnit = fin?.precioCompraApp ? (fin.cogs / Math.max(1, fin.unidades)) : Number(p.costo || 0);
-    const comPct = fin && fin.brutoMl > 0 ? fin.comision / Math.max(1, fin.bruto) : cfg.comision_ml;
-    const sim = simularML({
-      precio, unidades: 1, comisionPct: comPct,
-      cuotasPct: 0, envioUnit: cfg.envio_full_default || cfg.costo_envio_default || 0,
-      percepcionesPct: cfg.percepciones_pct || 0, costoUnit,
-    });
-    return { sku, nombre: p.nombre, sim };
+    const stock = stockBySku.get(k) ?? 0;
+    const vel = velBySku.get(k) ?? 0;                       // u/día (últimos 90d)
+    const unidades = hor === "stock" ? stock : Math.min(stock, Math.round(vel * Number(hor)));
+    const gUnit = netoUnit(sku, precio, costoUnit);
+    return { sku, nombre: p.nombre, precio, stock, vel, unidades, bruto: unidades * precio, ganancia: unidades * gUnit, gUnit, margen: precio > 0 ? gUnit / precio : 0 };
   });
-  const tot = filas.reduce((a, f) => ({
-    bruto: a.bruto + f.sim.bruto, recibis: a.recibis + f.sim.recibis, ganancia: a.ganancia + f.sim.ganancia,
-  }), { bruto: 0, recibis: 0, ganancia: 0 });
+  const tot = filas.reduce((a, f) => ({ unidades: a.unidades + f.unidades, bruto: a.bruto + f.bruto, ganancia: a.ganancia + f.ganancia }), { unidades: 0, bruto: 0, ganancia: 0 });
 
   return (
     <div className="fin-exec" style={{ alignItems: "start" }}>
       <div className="card card-pad">
         <div className="fin-box-t">Elegí SKU</div>
         <input className="input" placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} style={{ marginBottom: 8 }} />
+        <div className="between" style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn ghost btn-sm" onClick={selAll}>Marcar todos</button>
+            <button className="btn ghost btn-sm" onClick={selNone} disabled={sel.size === 0}>Ninguno</button>
+          </div>
+          <span className="muted" style={{ fontSize: ".78rem" }}>{sel.size} sel.</span>
+        </div>
         <div className="proy-list">
-          {lista.map((p) => (
-            <label key={p.sku} className={"proy-item " + (sel.has(p.sku) ? "on" : "")}>
-              <input type="checkbox" checked={sel.has(p.sku)} onChange={() => toggle(p.sku)} />
-              <span className="proy-nom">{p.nombre}</span>
-              <span className="proy-sku">{p.sku}</span>
-              <span className="proy-precio">{money(Number(p.precio || 0))}</span>
-            </label>
-          ))}
+          {lista.map((p) => {
+            const st = stockBySku.get(p.sku.toLowerCase()) ?? 0;
+            return (
+              <label key={p.sku} className={"proy-item " + (sel.has(p.sku) ? "on" : "")}>
+                <input type="checkbox" checked={sel.has(p.sku)} onChange={() => toggle(p.sku)} />
+                <span className="proy-nom">{p.nombre}</span>
+                <span className="proy-sku">stock {st}</span>
+                <span className="proy-precio">{money(Number(p.precio || 0))}</span>
+              </label>
+            );
+          })}
           {lista.length === 0 && <p className="muted">Sin resultados.</p>}
         </div>
       </div>
 
       <div className="card card-pad">
-        <div className="fin-box-t">Proyección por venta (a precio de lista)</div>
-        {filas.length === 0 ? <p className="muted">Seleccioná uno o más SKU para ver cuánto dejaría cada venta.</p> : (
+        <div className="between" style={{ marginBottom: 8 }}>
+          <div className="fin-box-t" style={{ margin: 0 }}>Proyección</div>
+          <div className="segbar">
+            {(["stock", "15", "30", "60", "90"] as Horizonte[]).map((h) => (
+              <button key={h} className={"seg" + (hor === h ? " on" : "")} onClick={() => setHor(h)}>
+                {h === "stock" ? "Todo el stock" : `${h} días`}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="muted" style={{ fontSize: ".78rem", marginTop: -2 }}>
+          {hor === "stock"
+            ? "Si se vende todo el stock disponible de cada SKU seleccionado."
+            : `Unidades que se venderían en ${hor} días según la velocidad de los últimos 90 días (tope: el stock disponible).`}
+        </p>
+        {filas.length === 0 ? <p className="muted">Seleccioná uno o más SKU.</p> : (
           <>
             <div className="scroll-x"><table className="tbl fin-tbl">
-              <thead><tr><th>Producto</th><th className="r">Precio</th><th className="r">Recibís</th><th className="r">Costo</th><th className="r">Ganancia</th><th className="r">Margen</th></tr></thead>
+              <thead><tr>
+                <th>Producto</th><th className="r">Stock</th><th className="r">Vel. u/d</th><th className="r">Unid. proy.</th>
+                <th className="r">Bruto</th><th className="r">Gan./u</th><th className="r">Ganancia</th><th className="r">Margen</th>
+              </tr></thead>
               <tbody>
                 {filas.map((f) => (
                   <tr key={f.sku}>
                     <td><div className="fin-name">{f.nombre}</div><div className="fin-sku">{f.sku}</div></td>
-                    <td className="r tnum">{money(f.sim.precio)}</td>
-                    <td className="r tnum">{money(f.sim.recibis)}</td>
-                    <td className="r tnum neg">{money(f.sim.costoTotal)}</td>
-                    <td className={"r tnum " + (f.sim.ganancia >= 0 ? "ok" : "crit")}>{money(f.sim.ganancia)}</td>
-                    <td className={"r tnum " + (f.sim.margen >= cfg.margen_min ? "ok" : "crit")}>{pct(f.sim.margen)}</td>
+                    <td className="r tnum">{f.stock}</td>
+                    <td className="r tnum">{f.vel.toFixed(2)}</td>
+                    <td className="r tnum"><b>{f.unidades}</b></td>
+                    <td className="r tnum">{money(f.bruto)}</td>
+                    <td className={"r tnum " + (f.gUnit >= 0 ? "ok" : "crit")}>{money(f.gUnit)}</td>
+                    <td className={"r tnum " + (f.ganancia >= 0 ? "ok" : "crit")}>{money(f.ganancia)}</td>
+                    <td className={"r tnum " + (f.margen >= cfg.margen_min ? "ok" : "crit")}>{pct(f.margen)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot><tr className="fin-tot-row">
-                <td>Total ({filas.length})</td><td className="r tnum">{money(tot.bruto)}</td><td className="r tnum">{money(tot.recibis)}</td>
-                <td className="r"></td><td className={"r tnum " + (tot.ganancia >= 0 ? "ok" : "crit")}>{money(tot.ganancia)}</td>
+                <td>Total ({filas.length})</td><td className="r"></td><td className="r"></td><td className="r tnum">{tot.unidades}</td>
+                <td className="r tnum">{money(tot.bruto)}</td><td className="r"></td>
+                <td className={"r tnum " + (tot.ganancia >= 0 ? "ok" : "crit")}>{money(tot.ganancia)}</td>
                 <td className="r tnum">{pct(tot.bruto > 0 ? tot.ganancia / tot.bruto : 0)}</td>
               </tr></tfoot>
             </table></div>
-            <p className="faint" style={{ fontSize: ".76rem" }}>Estimación con comisión real por publicación cuando existe; envío/percepciones desde Ajustes. Para simular otro precio usá <b>＋ Proyección</b>.</p>
+            <p className="faint" style={{ fontSize: ".76rem" }}>Ganancia por unidad = economía real reciente del SKU (comisión, envío y ads reales) cuando tiene ventas; si no, el simulador con los parámetros de Ajustes. Para probar otro precio o publicación usá <b>＋ Proyección</b>.</p>
           </>
         )}
       </div>
@@ -856,60 +913,178 @@ function Proyeccion({ res, cfg, prods }: { res: FinResultado; cfg: FinanzasConfi
   );
 }
 
-// ---- Simulador de costos estilo Mercado Libre (modal) ----
+// ---- Simulador de costos de Mercado Libre (modal, con endpoints reales) ----
+const LISTING_TYPES = [
+  { id: "gold_special", label: "Clásica" },
+  { id: "gold_pro", label: "Premium" },
+];
+// Opciones de cuotas sin interés (costo % que absorbe el vendedor). Aproximado y
+// editable; ML no expone un endpoint público limpio para el costo de cuotas.
+const CUOTAS_OPC = [
+  { v: "0", label: "No agregar cuotas" },
+  { v: "8.3", label: "3 cuotas s/interés" },
+  { v: "12.3", label: "6 cuotas s/interés" },
+  { v: "15.7", label: "9 cuotas s/interés" },
+];
 function SimuladorModal({ cfg, prods, onClose }: { cfg: FinanzasConfig; prods: ProdRaw[]; onClose: () => void }) {
-  const [skuSel, setSkuSel] = useState("");
+  const prodBySku = useMemo(() => new Map(prods.filter((p) => p.sku).map((p) => [String(p.sku).toLowerCase(), p])), [prods]);
+  const [q, setQ] = useState("");
+  const [cats, setCats] = useState<SimCategoria[]>([]);
+  const [pubs, setPubs] = useState<SimPublicacion[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [sel, setSel] = useState<{ tipo: "cat" | "pub"; nombre: string; category_id: string } | null>(null);
+  const [fee, setFee] = useState<SimFee | null>(null);
+  const [feeBusy, setFeeBusy] = useState(false);
   const [f, setF] = useState({
-    precio: "", costo: "", comision: (cfg.comision_ml * 100).toFixed(1), cuotas: "0",
-    envio: String(cfg.envio_full_default || 0), impuestos: ((cfg.percepciones_pct || 0) * 100).toFixed(1), unidades: "1",
+    precio: "", costo: "", listing: "gold_special", cuotas: "0",
+    envio: String(cfg.envio_full_default || 0), impuestos: ((cfg.percepciones_pct || 0) * 100).toFixed(2), unidades: "1",
   });
-  function elegir(sku: string) {
-    setSkuSel(sku);
-    const p = prods.find((x) => x.sku === sku);
-    if (p) setF((s) => ({ ...s, precio: String(p.precio || 0), costo: String(p.costo || 0) }));
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
+
+  // Búsqueda de categorías + publicaciones (debounce).
+  useEffect(() => {
+    if (!q.trim()) { setCats([]); setPubs([]); return; }
+    const t = setTimeout(async () => {
+      setBuscando(true);
+      try { const r = await api.simularBuscar(q.trim()); setCats(r.categorias ?? []); setPubs(r.publicaciones ?? []); }
+      catch { /* */ } finally { setBuscando(false); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Trae el cargo por vender REAL cuando hay categoría + precio + tipo.
+  async function traerCostos(category_id: string, price: number, listing: string) {
+    if (!category_id || !price) { setFee(null); return; }
+    setFeeBusy(true);
+    try { const r = await api.simularCostos(category_id, price, listing); setFee(r.elegido ?? null); }
+    catch { setFee(null); } finally { setFeeBusy(false); }
   }
-  const sim = simularML({
-    precio: Number(f.precio) || 0, unidades: Number(f.unidades) || 1,
-    comisionPct: (Number(f.comision) || 0) / 100, cuotasPct: (Number(f.cuotas) || 0) / 100,
-    envioUnit: Number(f.envio) || 0, percepcionesPct: (Number(f.impuestos) || 0) / 100, costoUnit: Number(f.costo) || 0,
-  });
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  async function elegirCategoria(c: SimCategoria) {
+    setSel({ tipo: "cat", nombre: `${c.category_name}`, category_id: c.category_id });
+    setPubs([]); setCats([]); setQ("");
+    if (Number(f.precio) > 0) traerCostos(c.category_id, Number(f.precio), f.listing);
+  }
+  async function elegirPublicacion(p: SimPublicacion) {
+    setSel({ tipo: "pub", nombre: p.title, category_id: p.category_id });
+    setCats([]); setPubs([]); setQ("");
+    const prod = p.sku ? prodBySku.get(String(p.sku).toLowerCase()) : undefined;
+    const listing = LISTING_TYPES.some((l) => l.id === p.listing_type_id) ? p.listing_type_id : "gold_special";
+    setF((s) => ({ ...s, precio: String(p.price || 0), listing, costo: prod ? String(prod.costo || 0) : s.costo }));
+    traerCostos(p.category_id, p.price, listing);
+  }
+  // Recalcular costos si cambia precio o tipo con una categoría ya elegida.
+  useEffect(() => {
+    if (sel && Number(f.precio) > 0) { const t = setTimeout(() => traerCostos(sel.category_id, Number(f.precio), f.listing), 350); return () => clearTimeout(t); }
+  }, [f.precio, f.listing]); // eslint-disable-line
+
+  const precio = Number(f.precio) || 0;
+  const unidades = Number(f.unidades) || 1;
+  const cargoVenderU = fee ? (precio * fee.percentage_fee / 100 + fee.fixed_fee) : precio * cfg.comision_ml;
+  const cuotasU = precio * (Number(f.cuotas) || 0) / 100;
+  const envioU = Number(f.envio) || 0;
+  const impU = precio * (Number(f.impuestos) || 0) / 100;
+  const recibisU = precio - cargoVenderU - cuotasU - envioU - impU;
+  const costoU = Number(f.costo) || 0;
+  const gananciaU = recibisU - costoU;
+  const m = (x: number) => x * unidades;
+
+  // Cotización real de Flexit por dirección (para el envío Flex).
+  const [cot, setCot] = useState({ direccion: "", localidad: "", provincia: "", busy: false, res: "" });
+  async function cotizar() {
+    if (!cot.localidad || !cot.provincia) { setCot({ ...cot, res: "Completá localidad y provincia" }); return; }
+    setCot({ ...cot, busy: true, res: "" });
+    try {
+      const r = await api.cotizarFlexit(cot.direccion || cot.localidad, cot.localidad, cot.provincia);
+      if (r.costo > 0) { setF((s) => ({ ...s, envio: String(r.costo) })); setCot((c) => ({ ...c, busy: false, res: `Flexit: ${money(r.costo)}${r.zonas?.[0]?.descripcion ? " · " + r.zonas[0].descripcion : ""}` })); }
+      else setCot((c) => ({ ...c, busy: false, res: "Sin cotización para esa dirección" }));
+    } catch (e) { setCot((c) => ({ ...c, busy: false, res: "Error: " + (e as Error).message })); }
+  }
+
+  const esProducto = sel?.tipo === "pub";
   return (
     <div className="modal-bg" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(620px,100%)" }}>
-        <div className="modal-head"><div><span className="eyebrow">Simulador</span><h3 style={{ margin: "2px 0 0" }}>Costos de venta (estilo Mercado Libre)</h3></div><button className="btn ghost btn-sm" onClick={onClose}>✕</button></div>
-        <div className="field"><label>Traer datos de un SKU <span className="muted">(opcional)</span></label>
-          <select className="select" value={skuSel} onChange={(e) => elegir(e.target.value)}>
-            <option value="">— manual —</option>
-            {prods.slice(0, 400).map((p) => <option key={p.sku} value={p.sku}>{p.sku} · {p.nombre}</option>)}
-          </select>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: "min(640px,100%)" }}>
+        <div className="modal-head"><div><span className="eyebrow">Simulador</span><h3 style={{ margin: "2px 0 0" }}>Costos de venta (Mercado Libre)</h3></div><button className="btn ghost btn-sm" onClick={onClose}>✕</button></div>
+
+        {/* Buscador de categoría / título / publicación */}
+        <div className="field"><label>Buscar categoría, título o publicación</label>
+          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ej: cámara domo, cerradura…" />
+        </div>
+        {(buscando || cats.length > 0 || pubs.length > 0) && (
+          <div className="sim-results">
+            {buscando && <div className="faint" style={{ padding: 8 }}>Buscando…</div>}
+            {cats.map((c) => (
+              <button key={c.category_id} className="sim-opt" onClick={() => elegirCategoria(c)}>
+                <span className="sim-opt-tag">Categoría</span><span>{c.category_name}</span><span className="proy-sku">{c.category_id}</span>
+              </button>
+            ))}
+            {pubs.map((p) => (
+              <button key={p.id} className="sim-opt" onClick={() => elegirPublicacion(p)}>
+                {p.thumbnail && <img src={p.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />}
+                <span className="sim-opt-tag pub">Publicación</span><span className="proy-nom">{p.title}</span><span className="proy-precio">{money(p.price)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {sel && (
+          <div className="sim-sel">
+            <span className={"sim-opt-tag " + (esProducto ? "pub" : "")}>{esProducto ? "Publicación" : "Categoría"}</span>
+            <b>{sel.nombre}</b>
+            <button className="btn ghost btn-sm" onClick={() => { setSel(null); setFee(null); }} style={{ marginLeft: "auto" }}>cambiar</button>
+          </div>
+        )}
+
+        <div className="row2">
+          <div className="field"><label>Precio de publicación</label><input className="input" type="number" value={f.precio} onChange={set("precio")} placeholder="0" /></div>
+          <div className="field"><label>Tipo de publicación</label>
+            <select className="select" value={f.listing} onChange={set("listing")}>{LISTING_TYPES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}</select>
+          </div>
         </div>
         <div className="row2">
-          <div className="field"><label>Precio de venta</label><input className="input" type="number" value={f.precio} onChange={set("precio")} placeholder="0" /></div>
-          <div className="field"><label>Costo de compra (unit.)</label><input className="input" type="number" value={f.costo} onChange={set("costo")} placeholder="0" /></div>
-        </div>
-        <div className="row2">
-          <div className="field"><label>Cargo por vender %</label><input className="input" type="number" step="0.1" value={f.comision} onChange={set("comision")} /></div>
-          <div className="field"><label>Costo cuotas s/interés %</label><input className="input" type="number" step="0.1" value={f.cuotas} onChange={set("cuotas")} /></div>
-        </div>
-        <div className="row2">
+          <div className="field"><label>Costo por ofrecer cuotas</label>
+            <select className="select" value={f.cuotas} onChange={set("cuotas")}>{CUOTAS_OPC.map((c) => <option key={c.v} value={c.v}>{c.label}</option>)}</select>
+          </div>
           <div className="field"><label>Costo de envío (unit.)</label><input className="input" type="number" value={f.envio} onChange={set("envio")} /></div>
-          <div className="field"><label>Impuestos / percepciones %</label><input className="input" type="number" step="0.1" value={f.impuestos} onChange={set("impuestos")} /></div>
+        </div>
+        <div className="row2">
+          <div className="field"><label>Impuestos / retenciones %</label><input className="input" type="number" step="0.01" value={f.impuestos} onChange={set("impuestos")} /></div>
+          <div className="field"><label>Costo de compra (unit.)</label><input className="input" type="number" value={f.costo} onChange={set("costo")} placeholder={esProducto ? "de la app" : "0"} /></div>
         </div>
         <div className="field"><label>Unidades</label><input className="input" type="number" value={f.unidades} onChange={set("unidades")} /></div>
 
-        <div className="card card-pad" style={{ marginTop: 4 }}>
-          <PlRow k="Precio de venta" v={money(sim.bruto)} />
-          <PlRow k="Cargo por vender" v={"-" + money(sim.cargoVender)} neg />
-          {sim.costoCuotas > 0 && <PlRow k="Costo por cuotas" v={"-" + money(sim.costoCuotas)} neg />}
-          <PlRow k="Costo de envío" v={"-" + money(sim.envio)} neg />
-          {sim.impuestos > 0 && <PlRow k="Impuestos" v={"-" + money(sim.impuestos)} neg />}
-          <div className="fin-pl-total"><span>Recibís</span><b className="ok">{money(sim.recibis)}</b></div>
-          <PlRow k="Costo de la mercadería" v={"-" + money(sim.costoTotal)} neg />
-          <div className="fin-pl-total"><span>Ganancia</span><b className={sim.ganancia >= 0 ? "ok" : "crit"}>{money(sim.ganancia)}</b></div>
-          <div className="fin-pl-sub">Margen sobre venta {pct(sim.margen)}</div>
+        <div className="fin-sep">Cotizar envío Flex (Flexit) <span className="muted" style={{ fontWeight: 400 }}>— completa el costo de envío</span></div>
+        <div className="row2">
+          <div className="field" style={{ marginBottom: 0 }}><label>Localidad</label><input className="input" value={cot.localidad} onChange={(e) => setCot({ ...cot, localidad: e.target.value })} placeholder="CABA" /></div>
+          <div className="field" style={{ marginBottom: 0 }}><label>Provincia</label><input className="input" value={cot.provincia} onChange={(e) => setCot({ ...cot, provincia: e.target.value })} placeholder="Buenos Aires" /></div>
         </div>
-        <p className="faint" style={{ fontSize: ".76rem" }}>Estimación local con los parámetros de arriba (Mercado Libre no expone un endpoint de simulador). El cargo por vender sale de la comisión real por publicación cuando la usás desde un SKU.</p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+          <input className="input grow" value={cot.direccion} onChange={(e) => setCot({ ...cot, direccion: e.target.value })} placeholder="Dirección (opcional)" />
+          <button className="btn" onClick={cotizar} disabled={cot.busy}>{cot.busy ? "Cotizando…" : "Cotizar Flexit"}</button>
+        </div>
+        {cot.res && <p className="faint" style={{ fontSize: ".78rem", marginTop: 4 }}>{cot.res}</p>}
+
+        {/* Desglose estilo ML */}
+        <div className="card card-pad" style={{ marginTop: 10 }}>
+          <div className="fin-box-t">Costos estimados {unidades > 1 && `(× ${unidades})`}</div>
+          <div className="sim-cost">
+            <div><span>Cargo por vender</span><b className="neg">-{money(m(cargoVenderU))}</b></div>
+            <div className="sim-sub">{feeBusy ? "consultando ML…" : fee ? `Pagás ${fee.percentage_fee}% por vender${fee.fixed_fee > 0 ? ` + ${money(fee.fixed_fee)} de costo por unidad` : ""}${fee.listing_type_name ? ` · ${fee.listing_type_name}` : ""}` : `${pct(cfg.comision_ml)} (respaldo — elegí una categoría o publicación para el dato real)`}</div>
+          </div>
+          {cuotasU > 0 && <div className="sim-cost"><div><span>Costo por ofrecer cuotas</span><b className="neg">-{money(m(cuotasU))}</b></div></div>}
+          <div className="sim-cost"><div><span>Costo por envío</span><b className="neg">-{money(m(envioU))}</b></div></div>
+          {impU > 0 && <div className="sim-cost"><div><span>Impuestos estimados</span><b className="neg">-{money(m(impU))}</b></div></div>}
+        </div>
+        <div className="card card-pad" style={{ marginTop: 8 }}>
+          <PlRow k="Precio de publicación" v={money(m(precio))} />
+          <PlRow k="Costos estimados" v={"-" + money(m(cargoVenderU + cuotasU + envioU + impU))} neg />
+          <div className="fin-pl-total"><span>Recibís</span><b className="ok">{money(m(recibisU))}</b></div>
+          {(esProducto || costoU > 0) && <>
+            <PlRow k="Costo de la mercadería" v={"-" + money(m(costoU))} neg />
+            <div className="fin-pl-total"><span>Ganancia</span><b className={gananciaU >= 0 ? "ok" : "crit"}>{money(m(gananciaU))}</b></div>
+            <div className="fin-pl-sub">Margen sobre venta {pct(precio > 0 ? gananciaU / precio : 0)}</div>
+          </>}
+        </div>
+        <p className="faint" style={{ fontSize: ".76rem" }}>El <b>cargo por vender</b> es el dato real de Mercado Libre (comisión por categoría + costo fijo). Cuotas/envío/impuestos son parámetros (ML no expone un endpoint público para esos). El costo de compra y la ganancia son nuestro agregado.</p>
       </div>
     </div>
   );

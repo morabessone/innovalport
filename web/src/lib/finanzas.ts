@@ -49,6 +49,7 @@ export interface FinExtra {
   feeRealSku?: Map<string, { fee: number; monto: number }>;
   envioRealSku?: Map<string, { envio: number; monto: number }>;
   adsSku?: Map<string, number>;
+  flexRealSku?: Map<string, number>;   // costo real de envío Flex (Flexit) por SKU en el período
 }
 
 export interface FinProducto {
@@ -58,7 +59,7 @@ export interface FinProducto {
   comision: number; cogs: number; envioFull: number; envioFlex: number;
   percepciones: number; financiacionMp: number; gastoTn: number; ads: number;
   devoluciones: number; financiacion: number;
-  comisionReal: boolean; envioReal: boolean;
+  comisionReal: boolean; envioReal: boolean; flexReal: boolean;
   neto: number; margen: number; roi: number;
   ciclo: number | null; capital: number; capitalNeto: number; autofinancia: boolean | null;
   // Split de canal para etiquetar exacto (ML) vs aproximado (TN).
@@ -85,6 +86,11 @@ export interface FinEmpresa {
   unidades: number; skus: number; sinPrecio: number; sinCompra: number;
 }
 export interface FinResultado { productos: FinProducto[]; proveedores: FinProveedor[]; empresa: FinEmpresa; }
+
+// Tipos del simulador de costos de Mercado Libre (edge fn ml-simular).
+export interface SimCategoria { category_id: string; category_name: string; domain_name: string; }
+export interface SimPublicacion { id: string; title: string; price: number; category_id: string; listing_type_id: string; thumbnail?: string; sku?: string | null; }
+export interface SimFee { sale_fee_amount: number; percentage_fee: number; fixed_fee: number; listing_type_id: string | null; listing_type_name: string | null; }
 
 // Órdenes de ML (tabla ml_ordenes) para acreditación y datos reales por SKU.
 export interface MlOrdenRaw {
@@ -176,6 +182,7 @@ export function calcularFinanzas(
   const feeRealSku = extra.feeRealSku ?? new Map<string, { fee: number; monto: number }>();
   const envioRealSku = extra.envioRealSku ?? new Map<string, { envio: number; monto: number }>();
   const adsSku = extra.adsSku ?? new Map<string, number>();
+  const flexRealSku = extra.flexRealSku ?? new Map<string, number>();
   const prod = new Map<string, ProdRaw>();
   for (const p of productos) prod.set(low(p.sku), p);
 
@@ -255,7 +262,10 @@ export function calcularFinanzas(
     const envioFull = envioReal
       ? a.brutoMl * (envReal!.envio / envReal!.monto)          // logística real de ML
       : unidadesMl * (cfg.envio_full_default || cfg.costo_envio_default || 0);
-    const envioFlex = envioReal ? 0 : unidadesMl * Number(pf?.envio_flex || 0);
+    // Envío Flex: costo REAL de Flexit (entregas) si está; si no, el cargado a
+    // mano por SKU. (El envío Full real de ML ya cubre las ventas Full.)
+    const flexReal = flexRealSku.has(k);
+    const envioFlex = flexReal ? Number(flexRealSku.get(k)) : (envioReal ? 0 : unidadesMl * Number(pf?.envio_flex || 0));
     const percepciones = a.brutoMl * (cfg.percepciones_pct || 0);
     const financiacionMp = a.brutoMl * (cfg.financiacion_mp_pct || 0);
     const ads = adsSku.get(k) ?? 0;                            // inversión Product Ads del período
@@ -319,7 +329,7 @@ export function calcularFinanzas(
       proveedor: compra?.proveedor || pf?.proveedor || "Sin proveedor asignado",
       unidades: a.unidades, bruto: a.bruto,
       comision, cogs, envioFull, envioFlex, percepciones, financiacionMp, gastoTn, ads,
-      devoluciones: devCost, financiacion, comisionReal, envioReal,
+      devoluciones: devCost, financiacion, comisionReal, envioReal, flexReal,
       neto, margen, roi, ciclo, capital, capitalNeto, autofinancia,
       brutoMl: a.brutoMl, brutoTn: a.brutoTn, canal, tasaDevolucion,
       sinPrecio: a.bruto === 0, sinCompra: !compra && !pf, precioCompraApp,

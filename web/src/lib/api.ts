@@ -7,7 +7,7 @@ import type {
   Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
   Publicacion, PublicacionSugerencia,
 } from "./types.ts";
-import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw, MlOrdenRaw } from "./finanzas.ts";
+import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw, MlOrdenRaw, SimCategoria, SimPublicacion, SimFee } from "./finanzas.ts";
 
 export const connected = isConnected;
 
@@ -302,6 +302,41 @@ export const api = {
   async syncMlAds(dias = 30): Promise<unknown> {
     if (!connected) return null;
     return callFn(`ml-ads-sync?dias=${dias}`, {});
+  },
+
+  // ---- Flexit (envío Flex): costo real por entrega + cotización ----
+  // Mapa sku → costo real total de envío Flex (Flexit) en el período.
+  async flexSku(dias = 60): Promise<Map<string, number>> {
+    const m = new Map<string, number>();
+    if (!connected) return m;
+    const desde = new Date(Date.now() - dias * 86400_000).toISOString();
+    const { data } = await supabase!.from("flexit_entregas").select("sku, costo, fecha").gte("fecha", desde).not("sku", "is", null);
+    for (const r of ((data as { sku: string; costo: number }[]) ?? [])) {
+      const k = String(r.sku).toLowerCase();
+      m.set(k, (m.get(k) ?? 0) + Number(r.costo || 0));
+    }
+    return m;
+  },
+  async syncFlexit(dias = 60): Promise<unknown> {
+    if (!connected) return null;
+    return callFn(`flexit-sync?dias=${dias}`, {});
+  },
+  async cotizarFlexit(direccion: string, localidad: string, provincia: string): Promise<{ costo: number; zonas: { descripcion: string; costo: number }[] }> {
+    if (!connected) return { costo: 0, zonas: [] };
+    return callFn("flexit-sync", { accion: "cotizar", direccion, localidad, provincia });
+  },
+
+  // ---- Simulador de costos de Mercado Libre (endpoints reales) ----
+  async simularBuscar(q: string): Promise<{ categorias: SimCategoria[]; publicaciones: SimPublicacion[] }> {
+    if (!connected) return { categorias: [], publicaciones: [] };
+    return callFn("ml-simular", { accion: "buscar", q });
+  },
+  async simularCostos(category_id: string, price: number, listing_type_id?: string): Promise<{ opciones: SimFee[]; elegido: SimFee | null }> {
+    if (!connected) return { opciones: [], elegido: null };
+    return callFn("ml-simular", { accion: "costos", category_id, price, listing_type_id });
+  },
+  async simularItem(item_id: string): Promise<{ item: SimPublicacion; costos: SimFee }> {
+    return callFn("ml-simular", { accion: "item", item_id });
   },
 
   // Sube una foto de devolución al storage y devuelve la URL pública.

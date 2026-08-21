@@ -7,7 +7,7 @@ import type {
   Deposito, StockConsolidado, Remito, Devolucion, IngresoItem, Auditoria, AltaProducto,
   Publicacion, PublicacionSugerencia,
 } from "./types.ts";
-import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw } from "./finanzas.ts";
+import type { FinanzasConfig, CompraDetalle, VentaRaw, ProdRaw, ProductoFinRaw, MlOrdenRaw } from "./finanzas.ts";
 
 export const connected = isConnected;
 
@@ -274,6 +274,34 @@ export const api = {
     if (!connected) return null;
     const { data } = await supabase!.from("producto_finanzas").select("*").eq("producto_id", producto_id).maybeSingle();
     return (data as ProductoFinRaw) ?? null;
+  },
+
+  // ---- Mercado Libre a nivel venta (órdenes + ads) ----
+  async mlOrdenes(): Promise<MlOrdenRaw[]> {
+    if (!connected) return [];
+    const { data, error } = await supabase!.from("ml_ordenes")
+      .select("sku, fecha, monto, sale_fee, envio_costo, acreditado, fecha_acreditacion")
+      .order("fecha", { ascending: false }).limit(5000);
+    if (error) throw error;
+    return (data as MlOrdenRaw[]) ?? [];
+  },
+  // Inversión de Product Ads por SKU (mapa sku→cost) para el período pedido.
+  async adsSku(dias = 30): Promise<Map<string, number>> {
+    const m = new Map<string, number>();
+    if (!connected) return m;
+    const { data } = await supabase!.from("ml_ads").select("sku, cost, periodo_dias").eq("periodo_dias", dias);
+    for (const r of ((data as { sku: string | null; cost: number }[]) ?? [])) {
+      if (r.sku) m.set(String(r.sku).toLowerCase(), (m.get(String(r.sku).toLowerCase()) ?? 0) + Number(r.cost || 0));
+    }
+    return m;
+  },
+  async syncMlOrdenes(dias = 60): Promise<unknown> {
+    if (!connected) return null;
+    return callFn(`ml-ordenes-sync?dias=${dias}`, {});
+  },
+  async syncMlAds(dias = 30): Promise<unknown> {
+    if (!connected) return null;
+    return callFn(`ml-ads-sync?dias=${dias}`, {});
   },
 
   // Sube una foto de devolución al storage y devuelve la URL pública.

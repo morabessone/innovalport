@@ -37,16 +37,27 @@ export interface ProductoFinRaw {
   envio_flex?: number | null; condicion_pago_label?: string | null; canal_principal?: string | null;
 }
 // Datos extra para un cálculo más preciso (comisión real de ML por SKU y
-// parámetros financieros por producto editados a mano).
-export interface FinExtra { comisionSku?: Map<string, number>; prodFinSku?: Map<string, ProductoFinRaw>; }
+// parámetros financieros por producto editados a mano). Además, datos reales
+// traídos de la API de Mercado Libre por SKU:
+//   feeRealSku   -> comisión real por venta (order_items[].sale_fee),
+//   envioRealSku -> logística real al vendedor (shipments/{id}/costs),
+//   adsSku       -> inversión de Mercado Ads (Product Ads) del período.
+export interface FinExtra {
+  comisionSku?: Map<string, number>;
+  prodFinSku?: Map<string, ProductoFinRaw>;
+  feeRealSku?: Map<string, { fee: number; monto: number }>;
+  envioRealSku?: Map<string, { envio: number; monto: number }>;
+  adsSku?: Map<string, number>;
+}
 
 export interface FinProducto {
   sku: string; nombre: string; proveedor: string;
   unidades: number; bruto: number;
   // Desglose de costos (feedback P4).
   comision: number; cogs: number; envioFull: number; envioFlex: number;
-  percepciones: number; financiacionMp: number; gastoTn: number;
+  percepciones: number; financiacionMp: number; gastoTn: number; ads: number;
   devoluciones: number; financiacion: number;
+  comisionReal: boolean; envioReal: boolean;
   neto: number; margen: number; roi: number;
   ciclo: number | null; capital: number; capitalNeto: number; autofinancia: boolean | null;
   // Split de canal para etiquetar exacto (ML) vs aproximado (TN).
@@ -64,7 +75,7 @@ export interface FinProveedor {
 }
 export interface FinEmpresa {
   bruto: number; comision: number; cogs: number; logistica: number;
-  percepciones: number; financiacionMp: number; gastoTn: number;
+  percepciones: number; financiacionMp: number; gastoTn: number; ads: number;
   financiacion: number; neto: number; margen: number; roi: number;
   capital: number; capitalDisponible: number; capitalNeto: number;
   ciclo: number | null; autofinancia: boolean;
@@ -73,6 +84,53 @@ export interface FinEmpresa {
   unidades: number; skus: number; sinPrecio: number; sinCompra: number;
 }
 export interface FinResultado { productos: FinProducto[]; proveedores: FinProveedor[]; empresa: FinEmpresa; }
+
+// Órdenes de ML (tabla ml_ordenes) para acreditación y datos reales por SKU.
+export interface MlOrdenRaw {
+  sku: string | null; fecha: string; monto: number; sale_fee: number;
+  envio_costo: number; acreditado: boolean; fecha_acreditacion: string | null;
+}
+export interface Acreditacion {
+  acreditado: number; pendiente: number; total: number;
+  ordenes: number; ordenesAcred: number;
+  porSku: Map<string, { acreditado: number; pendiente: number }>;
+}
+// Diferencia el capital YA disponible (acreditado por Mercado Pago) del que está
+// pendiente de acreditarse — lo que Martín llama "capital disponible".
+export function resumenAcreditacion(ordenes: MlOrdenRaw[], dias: number): Acreditacion {
+  const desde = Date.now() - dias * 86400_000;
+  const porSku = new Map<string, { acreditado: number; pendiente: number }>();
+  let acreditado = 0, pendiente = 0, ordenesAcred = 0, n = 0;
+  for (const o of ordenes) {
+    if (o.fecha && new Date(o.fecha).getTime() < desde) continue;
+    n++;
+    const monto = Number(o.monto || 0);
+    const k = String(o.sku ?? "").trim().toLowerCase();
+    const cur = porSku.get(k) ?? { acreditado: 0, pendiente: 0 };
+    if (o.acreditado) { acreditado += monto; cur.acreditado += monto; ordenesAcred++; }
+    else { pendiente += monto; cur.pendiente += monto; }
+    if (k) porSku.set(k, cur);
+  }
+  return { acreditado, pendiente, total: acreditado + pendiente, ordenes: n, ordenesAcred, porSku };
+}
+// Construye los mapas de datos reales de ML por SKU a partir de ml_ordenes.
+export function mapsDeOrdenes(ordenes: MlOrdenRaw[], dias: number): {
+  feeRealSku: Map<string, { fee: number; monto: number }>;
+  envioRealSku: Map<string, { envio: number; monto: number }>;
+} {
+  const desde = Date.now() - dias * 86400_000;
+  const feeRealSku = new Map<string, { fee: number; monto: number }>();
+  const envioRealSku = new Map<string, { envio: number; monto: number }>();
+  for (const o of ordenes) {
+    if (o.fecha && new Date(o.fecha).getTime() < desde) continue;
+    const k = String(o.sku ?? "").trim().toLowerCase();
+    if (!k) continue;
+    const monto = Number(o.monto || 0);
+    const f = feeRealSku.get(k) ?? { fee: 0, monto: 0 }; f.fee += Number(o.sale_fee || 0); f.monto += monto; feeRealSku.set(k, f);
+    const e = envioRealSku.get(k) ?? { envio: 0, monto: 0 }; e.envio += Number(o.envio_costo || 0); e.monto += monto; envioRealSku.set(k, e);
+  }
+  return { feeRealSku, envioRealSku };
+}
 
 const low = (s: string | null | undefined) => String(s ?? "").trim().toLowerCase();
 function canalDe(origen: string | null): "ml" | "tn" {
@@ -88,6 +146,9 @@ export function calcularFinanzas(
   const desde = Date.now() - dias * 86400_000;
   const comisionSku = extra.comisionSku ?? new Map<string, number>();
   const prodFinSku = extra.prodFinSku ?? new Map<string, ProductoFinRaw>();
+  const feeRealSku = extra.feeRealSku ?? new Map<string, { fee: number; monto: number }>();
+  const envioRealSku = extra.envioRealSku ?? new Map<string, { envio: number; monto: number }>();
+  const adsSku = extra.adsSku ?? new Map<string, number>();
   const prod = new Map<string, ProdRaw>();
   for (const p of productos) prod.set(low(p.sku), p);
 
@@ -159,17 +220,27 @@ export function calcularFinanzas(
     const cogs = a.unidades * costoUnit;
 
     // --- Desglose de costos por canal (feedback P4) ---
-    // ML: envío Full (config def) + envío Flex manual por SKU + percepciones % + financiación MP %.
+    // ML: envío Full (real de la API si existe, si no config) + envío Flex manual
+    // por SKU + percepciones % + financiación MP % + inversión de ads.
     const unidadesMl = a.bruto > 0 ? a.unidades * (a.brutoMl / a.bruto) : a.unidades;
-    const envioFull = unidadesMl * (cfg.envio_full_default || cfg.costo_envio_default || 0);
-    const envioFlex = unidadesMl * Number(pf?.envio_flex || 0);
+    const envReal = envioRealSku.get(k);
+    const envioReal = !!(envReal && envReal.monto > 0);
+    const envioFull = envioReal
+      ? a.brutoMl * (envReal!.envio / envReal!.monto)          // logística real de ML
+      : unidadesMl * (cfg.envio_full_default || cfg.costo_envio_default || 0);
+    const envioFlex = envioReal ? 0 : unidadesMl * Number(pf?.envio_flex || 0);
     const percepciones = a.brutoMl * (cfg.percepciones_pct || 0);
     const financiacionMp = a.brutoMl * (cfg.financiacion_mp_pct || 0);
+    const ads = adsSku.get(k) ?? 0;                            // inversión Product Ads del período
     // TN: bucket único APROXIMADO. Reemplaza comisión/envío/percepciones de TN.
     const gastoTn = a.brutoTn * (cfg.tn_gasto_pct || 0);
-    // La comisión acumulada arriba incluye TN al comision_tn; para no duplicar con
-    // el bucket TN, restamos la parte TN de la comisión (queda solo la de ML).
-    const comisionMl = a.comision - a.brutoTn * cfg.comision_tn;
+    // Comisión de ML: real (order_items[].sale_fee) si la tenemos; si no, la
+    // acumulada por listing_prices. La comisión acumulada incluye TN, la sacamos.
+    const feeReal = feeRealSku.get(k);
+    const comisionReal = !!(feeReal && feeReal.monto > 0);
+    const comisionMl = comisionReal
+      ? a.brutoMl * (feeReal!.fee / feeReal!.monto)
+      : a.comision - a.brutoTn * cfg.comision_tn;
 
     const dev = devSku.get(k);
     const devCost = dev?.perdida ?? 0;
@@ -200,7 +271,7 @@ export function calcularFinanzas(
     // aparte: todos sus gastos (comisión + envío + percepciones) van al bucket
     // único aproximado `gastoTn`, para no duplicar (feedback P4).
     const comision = comisionMl;
-    const neto = a.bruto - comisionMl - cogs - envioFull - envioFlex - percepciones - financiacionMp - gastoTn - devCost - financiacion;
+    const neto = a.bruto - comisionMl - cogs - envioFull - envioFlex - percepciones - financiacionMp - ads - gastoTn - devCost - financiacion;
     const margen = a.bruto > 0 ? neto / a.bruto : 0;
     const roi = cogs > 0 ? neto / cogs : 0;
     const autofinancia = ciclo != null ? ciclo < 0 : null;
@@ -220,8 +291,8 @@ export function calcularFinanzas(
       sku: p?.sku ?? k, nombre: p?.nombre ?? k,
       proveedor: compra?.proveedor || pf?.proveedor || "Sin proveedor asignado",
       unidades: a.unidades, bruto: a.bruto,
-      comision, cogs, envioFull, envioFlex, percepciones, financiacionMp, gastoTn,
-      devoluciones: devCost, financiacion,
+      comision, cogs, envioFull, envioFlex, percepciones, financiacionMp, gastoTn, ads,
+      devoluciones: devCost, financiacion, comisionReal, envioReal,
       neto, margen, roi, ciclo, capital, capitalNeto, autofinancia,
       brutoMl: a.brutoMl, brutoTn: a.brutoTn, canal, tasaDevolucion,
       sinPrecio: a.bruto === 0, sinCompra: !compra && !pf, precioCompraApp,
@@ -267,6 +338,7 @@ export function calcularFinanzas(
   const percepciones = sum((i) => i.percepciones);
   const financiacionMp = sum((i) => i.financiacionMp);
   const gastoTn = sum((i) => i.gastoTn);
+  const ads = sum((i) => i.ads);
   const financiacion = sum((i) => i.financiacion);
   const neto = sum((i) => i.neto);
   const capital = sum((i) => i.capital);
@@ -279,7 +351,7 @@ export function calcularFinanzas(
   const unidadesDev = devoluciones.reduce((s, d) => s + Number(d.cantidad || 0), 0);
 
   const empresa: FinEmpresa = {
-    bruto, comision, cogs, logistica, percepciones, financiacionMp, gastoTn, financiacion, neto,
+    bruto, comision, cogs, logistica, percepciones, financiacionMp, gastoTn, ads, financiacion, neto,
     margen: bruto > 0 ? neto / bruto : 0, roi: cogs > 0 ? neto / cogs : 0,
     capital, capitalDisponible, capitalNeto: capital - capitalDisponible,
     ciclo, autofinancia: ciclo != null ? ciclo < 0 : false,

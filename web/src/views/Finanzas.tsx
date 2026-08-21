@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.ts";
 import {
-  calcularFinanzas, simularML,
-  type FinResultado, type FinProducto, type FinanzasConfig, type ProdRaw,
+  calcularFinanzas, simularML, resumenAcreditacion, mapsDeOrdenes,
+  type FinResultado, type FinProducto, type FinanzasConfig, type ProdRaw, type Acreditacion,
 } from "../lib/finanzas.ts";
 
 export type FinTab = "resumen" | "producto" | "proveedor" | "capital" | "matriz" | "proyeccion";
@@ -28,6 +28,8 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   const [serie, setSerie] = useState<{ label: string; bruto: number }[]>([]);
   const [detalle, setDetalle] = useState<FinProducto | null>(null);
   const [proyModal, setProyModal] = useState(false);
+  const [acred, setAcred] = useState<Acreditacion | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   // Mapa sku(lower) → producto_id, para editar producto_finanzas desde el detalle.
   const prodIdBySku = useMemo(() => {
@@ -39,9 +41,9 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   async function cargar() {
     setLoading(true);
     try {
-      const [config, ventas, prds, compras, devs, comis, prodFin] = await Promise.all([
+      const [config, ventas, prds, compras, devs, comis, prodFin, ordenes, ads] = await Promise.all([
         api.finanzasConfig(), api.ventasRaw(), api.productosRaw(), api.comprasDetalle(), api.devoluciones(),
-        api.comisionesSku(), api.productoFinanzasAll(),
+        api.comisionesSku(), api.productoFinanzasAll(), api.mlOrdenes(), api.adsSku(30),
       ]);
       const c: FinanzasConfig = { ...CFG_DEFAULT, ...(config ?? {}) };
       setCfg(c); setProds(prds);
@@ -50,7 +52,10 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       const prodById = new Map(prds.filter((p) => p.id).map((p) => [p.id!, p]));
       const prodFinSku = new Map<string, typeof prodFin[number]>();
       for (const pf of prodFin) { const p = prodById.get(pf.producto_id); if (p) prodFinSku.set(String(p.sku).toLowerCase(), pf); }
-      setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku }));
+      // Datos reales de Mercado Libre por SKU (comisión, logística) + inversión en ads.
+      const { feeRealSku, envioRealSku } = mapsDeOrdenes(ordenes, periodo);
+      setAcred(resumenAcreditacion(ordenes, periodo));
+      setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku, feeRealSku, envioRealSku, adsSku: ads }));
 
       // Serie mensual de facturación (últimos 6 meses).
       const now = new Date();
@@ -75,11 +80,23 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
   }
   useEffect(() => { cargar(); }, [periodo]);
 
+  async function sincronizarML() {
+    setSyncing(true);
+    try {
+      notify("Sincronizando órdenes y ads de Mercado Libre… puede tardar.");
+      await Promise.all([api.syncMlOrdenes(periodo), api.syncMlAds(30)]);
+      notify("Datos de Mercado Libre actualizados");
+      await cargar();
+    } catch (e) { notify("Error al sincronizar ML: " + (e as Error).message); }
+    finally { setSyncing(false); }
+  }
+
   const head = (
     <div className="section-head">
       <div><span className="eyebrow">Finanzas</span><h2>{TITULOS[subtab][0]}</h2><p className="muted">{TITULOS[subtab][1]}</p></div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {subtab === "proyeccion" && <button className="btn primary" onClick={() => setProyModal(true)}>＋ Proyección</button>}
+        {(subtab === "capital" || subtab === "resumen") && <button className="btn" onClick={sincronizarML} disabled={syncing} title="Trae órdenes (acreditación, envío, comisión real) e inversión de ads de Mercado Libre">{syncing ? "Sincronizando…" : "🔄 Sincronizar ML"}</button>}
         <select className="select" style={{ width: "auto" }} value={periodo} onChange={(e) => setPeriodo(Number(e.target.value))}>
           <option value={30}>Últimos 30 días</option>
           <option value={60}>Últimos 60 días</option>
@@ -98,7 +115,7 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       {subtab === "resumen" && <Resumen res={res} cfg={cfg} serie={serie} />}
       {subtab === "producto" && <PorProducto res={res} cfg={cfg} onSelect={setDetalle} />}
       {subtab === "proveedor" && <PorProveedor res={res} />}
-      {subtab === "capital" && <Capital res={res} />}
+      {subtab === "capital" && <Capital res={res} acred={acred} />}
       {subtab === "matriz" && <Matriz res={res} cfg={cfg} />}
       {subtab === "proyeccion" && <Proyeccion res={res} cfg={cfg} prods={prods} />}
       <DataNote res={res} cfg={cfg} />
@@ -219,6 +236,7 @@ function Resumen({ res, cfg, serie }: { res: FinResultado; cfg: FinanzasConfig; 
     { k: "Comisiones marketplace", v: e.comision, c: "#3E86FF" },
     { k: "Costo de mercadería (COGS)", v: e.cogs, c: "#12B4EF" },
     { k: "Logística (envíos + dev.)", v: e.logistica, c: "#B0791C" },
+    { k: "Publicidad (Mercado Ads)", v: e.ads, c: "#F59E0B" },
     { k: "Percepciones / impuestos", v: e.percepciones, c: "#8B5CF6" },
     { k: "Financiación MP", v: e.financiacionMp, c: "#EC4899" },
     { k: "Gasto TN (aprox.)", v: e.gastoTn, c: "#64748B" },
@@ -234,6 +252,7 @@ function Resumen({ res, cfg, serie }: { res: FinResultado; cfg: FinanzasConfig; 
           <PlRow k="Comisiones marketplace" v={"-" + money(e.comision)} neg />
           <PlRow k="Costo de mercadería (COGS)" v={"-" + money(e.cogs)} neg />
           <PlRow k="Logística (envíos + dev.)" v={"-" + money(e.logistica)} neg />
+          {e.ads > 0 && <PlRow k="Publicidad (Mercado Ads)" v={"-" + money(e.ads)} neg />}
           {e.percepciones > 0 && <PlRow k="Percepciones / impuestos" v={"-" + money(e.percepciones)} neg />}
           {e.financiacionMp > 0 && <PlRow k="Financiación MP" v={"-" + money(e.financiacionMp)} neg />}
           {e.gastoTn > 0 && <PlRow k="Gasto Tienda Nube (aprox.)" v={"-" + money(e.gastoTn)} neg />}
@@ -303,7 +322,7 @@ function MesBars({ serie }: { serie: { label: string; bruto: number }[] }) {
 }
 
 function Waterfall({ e }: { e: FinResultado["empresa"] }) {
-  const otros = e.percepciones + e.financiacionMp + e.gastoTn;
+  const otros = e.percepciones + e.financiacionMp + e.gastoTn + e.ads;
   const steps = [
     { k: "Bruto", v: e.bruto, tipo: "base" },
     { k: "Comisiones", v: -e.comision, tipo: "neg" },
@@ -408,10 +427,11 @@ function ProductoDrawer({ p, cfg, productoId, costoCB, onClose, onSaved, notify 
   }, [productoId]);
 
   const costos = [
-    { k: "Comisión marketplace", v: p.comision },
+    { k: "Comisión marketplace" + (p.comisionReal ? " (real ML)" : ""), v: p.comision },
     { k: "Costo de mercadería (COGS)", v: p.cogs },
-    { k: "Envío Full", v: p.envioFull },
+    { k: "Envío Full" + (p.envioReal ? " (real ML)" : ""), v: p.envioFull },
     { k: "Envío Flex (manual)", v: p.envioFlex },
+    { k: "Publicidad (Mercado Ads)", v: p.ads },
     { k: "Percepciones / impuestos", v: p.percepciones },
     { k: "Financiación MP", v: p.financiacionMp },
     { k: "Gasto Tienda Nube (aprox.)", v: p.gastoTn },
@@ -576,7 +596,7 @@ function PorProveedor({ res }: { res: FinResultado }) {
 }
 
 // ---- Capital de trabajo (requerido vs disponible + filtros + export) ----
-function Capital({ res }: { res: FinResultado }) {
+function Capital({ res, acred }: { res: FinResultado; acred: Acreditacion | null }) {
   const e = res.empresa;
   const [signo, setSigno] = useState<"todos" | "pos" | "neg">("todos");
   const [canal, setCanal] = useState<"todos" | "ML" | "TN" | "Ambos">("todos");
@@ -611,6 +631,22 @@ function Capital({ res }: { res: FinResultado }) {
         <Kpi label="Capital neto" value={money(e.capitalNeto)} tone={e.capitalNeto <= 0 ? "ok" : "warn"} />
         <Kpi label="Ciclo de caja promedio" value={dias(e.ciclo)} />
       </div>
+
+      {acred && acred.total > 0 && (
+        <div className="card card-pad">
+          <div className="fin-box-t">Acreditación de Mercado Libre — capital disponible vs. pendiente</div>
+          <p className="muted" style={{ fontSize: ".78rem", marginTop: -2 }}>
+            De {acred.ordenes} órdenes ML sincronizadas: lo <b>acreditado</b> ya está disponible en Mercado Pago; lo <b>pendiente</b> todavía no se liberó.
+          </p>
+          <div className="kpis">
+            <Kpi label="Ya acreditado (disponible)" value={money(acred.acreditado)} tone="ok" hint={`${acred.ordenesAcred} órdenes liberadas`} />
+            <Kpi label="Pendiente de acreditar" value={money(acred.pendiente)} tone="warn" hint={`${acred.ordenes - acred.ordenesAcred} órdenes sin liberar`} />
+            <Kpi label="Total en tránsito" value={money(acred.total)} />
+            <Kpi label="% ya disponible" value={pct(acred.total > 0 ? acred.acreditado / acred.total : 0)} tone="ok" />
+          </div>
+          <AcredBar acreditado={acred.acreditado} pendiente={acred.pendiente} />
+        </div>
+      )}
 
       {res.proveedores.some((p) => p.ciclo != null) && (
         <div className="card card-pad">
@@ -658,6 +694,16 @@ function Capital({ res }: { res: FinResultado }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function AcredBar({ acreditado, pendiente }: { acreditado: number; pendiente: number }) {
+  const tot = Math.max(1, acreditado + pendiente);
+  return (
+    <div className="acred-bar" title={`Acreditado ${money(acreditado)} · Pendiente ${money(pendiente)}`}>
+      <i className="acred-ok" style={{ width: `${(acreditado / tot) * 100}%` }} />
+      <i className="acred-pend" style={{ width: `${(pendiente / tot) * 100}%` }} />
     </div>
   );
 }

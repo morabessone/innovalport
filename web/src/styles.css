@@ -574,6 +574,12 @@ button.pub-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-li
 .proy-sku { font-family: var(--mono); font-size: .7rem; color: var(--ink-faint); }
 .proy-precio { font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* Barra de acreditación (disponible vs pendiente) */
+.acred-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-top: 12px; background: var(--card-2); }
+.acred-bar i { display: block; height: 100%; }
+.acred-ok { background: #1a9f5a; }
+.acred-pend { background: #E0A61C; }
+
 .prov-card { overflow: hidden; }
 .prov-head { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; font: inherit; color: var(--ink); background: transparent; border: 0; padding: 14px 18px; cursor: pointer; }
 .prov-head:hover { background: var(--card-2); }

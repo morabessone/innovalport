@@ -22,6 +22,7 @@ export interface FinanzasConfig {
   dias_cobro_ml: number; dias_cobro_tn: number; costo_envio_default: number; margen_min: number;
   // Buckets de costo agregados por el feedback (con defaults en el caller).
   percepciones_pct: number; financiacion_mp_pct: number; tn_gasto_pct: number; envio_full_default: number;
+  dias_acreditacion_ml: number;
 }
 export interface CompraDetalle {
   id: string; sku: string | null; proveedor: string | null;
@@ -89,29 +90,41 @@ export interface FinResultado { productos: FinProducto[]; proveedores: FinProvee
 export interface MlOrdenRaw {
   sku: string | null; fecha: string; monto: number; sale_fee: number;
   envio_costo: number; acreditado: boolean; fecha_acreditacion: string | null;
+  pago_estado?: string | null;
 }
 export interface Acreditacion {
   acreditado: number; pendiente: number; total: number;
-  ordenes: number; ordenesAcred: number;
+  ordenes: number; ordenesAcred: number; estimado: boolean;
   porSku: Map<string, { acreditado: number; pendiente: number }>;
 }
 // Diferencia el capital YA disponible (acreditado por Mercado Pago) del que está
 // pendiente de acreditarse — lo que Martín llama "capital disponible".
-export function resumenAcreditacion(ordenes: MlOrdenRaw[], dias: number): Acreditacion {
+// Si la orden tiene dato REAL de Mercado Pago (acreditado / fecha_acreditacion)
+// se usa; si no, se ESTIMA por antigüedad (>= lagDias desde la venta). Devuelve
+// `estimado: true` cuando alguna orden se resolvió por estimación.
+export function resumenAcreditacion(ordenes: MlOrdenRaw[], dias: number, lagDias = 7): Acreditacion {
   const desde = Date.now() - dias * 86400_000;
   const porSku = new Map<string, { acreditado: number; pendiente: number }>();
-  let acreditado = 0, pendiente = 0, ordenesAcred = 0, n = 0;
+  let acreditado = 0, pendiente = 0, ordenesAcred = 0, n = 0, estimadas = 0;
   for (const o of ordenes) {
     if (o.fecha && new Date(o.fecha).getTime() < desde) continue;
+    const est = String(o.pago_estado ?? "").toLowerCase();
+    if (est && est !== "approved") continue;   // solo pagos aprobados cuentan como capital
     n++;
     const monto = Number(o.monto || 0);
     const k = String(o.sku ?? "").trim().toLowerCase();
     const cur = porSku.get(k) ?? { acreditado: 0, pendiente: 0 };
-    if (o.acreditado) { acreditado += monto; cur.acreditado += monto; ordenesAcred++; }
+    let acred = o.acreditado;
+    if (!o.fecha_acreditacion && !o.acreditado) {           // sin dato real → estimar por antigüedad
+      const ageDias = o.fecha ? (Date.now() - new Date(o.fecha).getTime()) / 86400_000 : 0;
+      acred = ageDias >= lagDias;
+      estimadas++;
+    }
+    if (acred) { acreditado += monto; cur.acreditado += monto; ordenesAcred++; }
     else { pendiente += monto; cur.pendiente += monto; }
     if (k) porSku.set(k, cur);
   }
-  return { acreditado, pendiente, total: acreditado + pendiente, ordenes: n, ordenesAcred, porSku };
+  return { acreditado, pendiente, total: acreditado + pendiente, ordenes: n, ordenesAcred, estimado: estimadas > 0, porSku };
 }
 // Construye los mapas de datos reales de ML por SKU a partir de ml_ordenes.
 export function mapsDeOrdenes(ordenes: MlOrdenRaw[], dias: number): {

@@ -16,6 +16,7 @@ const CFG_DEFAULT: FinanzasConfig = {
   tasa_anual: 0.4, comision_ml: 0.14, comision_tn: 0.10, dias_cobro_ml: 14, dias_cobro_tn: 10,
   costo_envio_default: 0, margen_min: 0.15,
   percepciones_pct: 0, financiacion_mp_pct: 0, tn_gasto_pct: 0.15, envio_full_default: 0,
+  dias_acreditacion_ml: 7,
 };
 
 export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: string) => void }) {
@@ -54,7 +55,7 @@ export function Finanzas({ subtab, notify }: { subtab: FinTab; notify: (m: strin
       for (const pf of prodFin) { const p = prodById.get(pf.producto_id); if (p) prodFinSku.set(String(p.sku).toLowerCase(), pf); }
       // Datos reales de Mercado Libre por SKU (comisión, logística) + inversión en ads.
       const { feeRealSku, envioRealSku } = mapsDeOrdenes(ordenes, periodo);
-      setAcred(resumenAcreditacion(ordenes, periodo));
+      setAcred(resumenAcreditacion(ordenes, periodo, c.dias_acreditacion_ml ?? 7));
       setRes(calcularFinanzas(ventas, prds, compras, devRaw, c, periodo, { comisionSku, prodFinSku, feeRealSku, envioRealSku, adsSku: ads }));
 
       // Serie mensual de facturación (últimos 6 meses).
@@ -146,6 +147,7 @@ function AjustesModal({ cfg, onClose, onSaved, notify }: { cfg: FinanzasConfig; 
     percepciones_pct: ((cfg.percepciones_pct ?? 0) * 100).toString(),
     financiacion_mp_pct: ((cfg.financiacion_mp_pct ?? 0) * 100).toString(),
     tn_gasto_pct: ((cfg.tn_gasto_pct ?? 0.15) * 100).toString(),
+    dias_acreditacion_ml: (cfg.dias_acreditacion_ml ?? 7).toString(),
   });
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
@@ -160,6 +162,7 @@ function AjustesModal({ cfg, onClose, onSaved, notify }: { cfg: FinanzasConfig; 
         percepciones_pct: Number(f.percepciones_pct) / 100,
         financiacion_mp_pct: Number(f.financiacion_mp_pct) / 100,
         tn_gasto_pct: Number(f.tn_gasto_pct) / 100,
+        dias_acreditacion_ml: Number(f.dias_acreditacion_ml),
       });
       notify("Ajustes guardados"); onSaved();
     } catch (e) { notify("Error: " + (e as Error).message); setBusy(false); }
@@ -192,6 +195,7 @@ function AjustesModal({ cfg, onClose, onSaved, notify }: { cfg: FinanzasConfig; 
           <div className="field"><label>Días de cobro TN</label><input className="input" type="number" value={f.dias_cobro_tn} onChange={set("dias_cobro_tn")} /></div>
           <div className="field"><label>Margen mínimo objetivo %</label><input className="input" type="number" step="0.1" value={f.margen_min} onChange={set("margen_min")} /></div>
         </div>
+        <div className="field"><label>Días hasta acreditación de ML (estimación)</label><input className="input" type="number" value={f.dias_acreditacion_ml} onChange={set("dias_acreditacion_ml")} /></div>
         <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} onClick={guardar} disabled={busy}>{busy ? "Guardando…" : "Guardar ajustes"}</button>
       </div>
     </div>
@@ -636,7 +640,8 @@ function Capital({ res, acred }: { res: FinResultado; acred: Acreditacion | null
         <div className="card card-pad">
           <div className="fin-box-t">Acreditación de Mercado Libre — capital disponible vs. pendiente</div>
           <p className="muted" style={{ fontSize: ".78rem", marginTop: -2 }}>
-            De {acred.ordenes} órdenes ML sincronizadas: lo <b>acreditado</b> ya está disponible en Mercado Pago; lo <b>pendiente</b> todavía no se liberó.
+            De {acred.ordenes} órdenes ML aprobadas: lo <b>acreditado</b> ya está disponible en Mercado Pago; lo <b>pendiente</b> todavía no se liberó.
+            {acred.estimado && <span className="mini-tag warn"> estimado por antigüedad</span>}
           </p>
           <div className="kpis">
             <Kpi label="Ya acreditado (disponible)" value={money(acred.acreditado)} tone="ok" hint={`${acred.ordenesAcred} órdenes liberadas`} />

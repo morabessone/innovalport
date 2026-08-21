@@ -61,16 +61,23 @@ Deno.serve(async (req) => {
       if (p.ml_item_id) { if (p.sku) skuByItem.set(String(p.ml_item_id), String(p.sku)); if (p.logistic_type) logByItem.set(String(p.ml_item_id), String(p.logistic_type)); }
     }
 
-    // Qué órdenes ya tienen envío resuelto (para no re-pedir shipments).
-    const { data: yaRows } = await d.from("ml_ordenes").select("order_id, envio_costo");
+    // Qué órdenes ya tienen envío / acreditación resueltos (para no re-pedir).
+    const { data: yaRows } = await d.from("ml_ordenes").select("order_id, envio_costo, acreditado");
     const envioResuelto = new Set<number>();
-    for (const r of (yaRows ?? []) as any[]) if (Number(r.envio_costo) > 0) envioResuelto.add(Number(r.order_id));
+    const acredResuelto = new Set<number>();
+    for (const r of (yaRows ?? []) as any[]) {
+      if (Number(r.envio_costo) > 0) envioResuelto.add(Number(r.order_id));
+      if (r.acreditado) acredResuelto.add(Number(r.order_id));
+    }
 
     const desde = new Date(Date.now() - dias * 86400_000).toISOString();
     const hasta = new Date(Date.now() + 86400_000).toISOString();
     const rows: Record<string, any>[] = [];
-    let vistas = 0, envioCalls = 0;
+    let vistas = 0, envioCalls = 0, mpCalls = 0, mpOk = 0;
     const maxEnvio = 70;   // tope de lookups de shipment por corrida (se completan de a poco)
+    // Los lookups a /v1/payments requieren scope de Mercado Pago (hoy el token de
+    // ML no lo tiene y devuelven error). Se activan con ?mp=1 cuando exista scope.
+    const maxMp = url.searchParams.get("mp") === "1" ? 150 : 0;
 
     paging:
     for (let offset = 0; offset < 2000; offset += 50) {
@@ -86,8 +93,27 @@ Deno.serve(async (req) => {
         const pagos = (o.payments ?? []) as any[];
         const pago = pagos.find((p) => low(p.status) === "approved") ?? pagos[0] ?? {};
         const estado = String(pago.status ?? o.status ?? "");
-        const releaseDate = pago.money_release_date ?? null;
-        const acreditado = !!releaseDate && new Date(releaseDate).getTime() <= Date.now();
+        const paymentId = Number(pago.id ?? 0) || null;
+        // La acreditación (money_release_date) no viene en la orden: se consulta
+        // a la API de pagos de Mercado Pago /v1/payments/{id}. Solo para pagos
+        // aprobados y no resueltos aún, con tope por corrida.
+        let releaseDate = pago.money_release_date ?? null;
+        let releaseStatus: string | null = pago.money_release_status ?? null;
+        let netoRecibido: number | null = null;
+        if (paymentId && low(estado) === "approved" && !acredResuelto.has(orderId) && mpCalls < maxMp) {
+          mpCalls++;
+          const pay = await mlGet(`/v1/payments/${paymentId}`, token);
+          if (pay && !pay.__status) {
+            mpOk++;
+            releaseDate = pay.money_release_date ?? releaseDate;
+            releaseStatus = pay.money_release_status ?? releaseStatus;
+            const net = pay.transaction_details?.net_received_amount;
+            if (net != null) netoRecibido = Number(net);
+          }
+          await sleep(40);
+        }
+        const acreditado = low(String(releaseStatus ?? "")) === "released"
+          || (!!releaseDate && new Date(releaseDate).getTime() <= Date.now());
 
         // Logística real al vendedor (una llamada por orden, con tope).
         let envioOrden = 0;
@@ -113,13 +139,17 @@ Deno.serve(async (req) => {
           const cant = Number(it.quantity ?? 0);
           const monto = Number(it.unit_price ?? 0) * cant;
           const saleFee = Number(it.sale_fee ?? 0) * cant;   // sale_fee es por unidad
-          const envio = envioOrden * (monto / brutoOrden);   // proporcional al ítem
+          const share = brutoOrden > 0 ? monto / brutoOrden : 1;
+          const envio = envioOrden * share;                  // proporcional al ítem
           rows.push({
             order_id: orderId, ml_item_id: itemId, sku: sku ? low(sku) : null, fecha,
             cantidad: cant, monto: Math.round(monto), sale_fee: Math.round(saleFee),
             envio_costo: Math.round(envio),
             logistic_type: it.item?.logistic_type ?? logByItem.get(itemId) ?? o.shipping?.logistic_type ?? null,
-            pago_estado: estado, acreditado, fecha_acreditacion: releaseDate, shipment_id: shipId,
+            pago_estado: estado, payment_id: paymentId, money_release_status: releaseStatus,
+            acreditado, fecha_acreditacion: releaseDate,
+            neto_recibido: netoRecibido != null ? Math.round(netoRecibido * share) : null,
+            shipment_id: shipId,
             updated_at: new Date().toISOString(),
           });
         }
@@ -137,6 +167,6 @@ Deno.serve(async (req) => {
     }
 
     const acred = rows.filter((r) => r.acreditado).length;
-    return json({ ok: true, ordenes_vistas: vistas, filas: guardadas, acreditadas: acred, pendientes: rows.length - acred, envio_lookups: envioCalls });
+    return json({ ok: true, ordenes_vistas: vistas, filas: guardadas, acreditadas: acred, pendientes: rows.length - acred, envio_lookups: envioCalls, pago_lookups: mpCalls, pago_ok: mpOk });
   } catch (e) { return json({ ok: false, error: String(e) }, 500); }
 });

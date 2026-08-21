@@ -280,7 +280,7 @@ export const api = {
   async mlOrdenes(): Promise<MlOrdenRaw[]> {
     if (!connected) return [];
     const { data, error } = await supabase!.from("ml_ordenes")
-      .select("sku, fecha, monto, sale_fee, envio_costo, acreditado, fecha_acreditacion")
+      .select("sku, fecha, monto, sale_fee, envio_costo, acreditado, fecha_acreditacion, pago_estado")
       .order("fecha", { ascending: false }).limit(5000);
     if (error) throw error;
     return (data as MlOrdenRaw[]) ?? [];

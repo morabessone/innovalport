@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     if (accion === "config") {
       const c = config ?? {};
       const patch: Record<string, unknown> = { id: 1, updated_at: new Date().toISOString() };
-      for (const k of ["tasa_anual", "comision_ml", "comision_tn", "dias_cobro_ml", "dias_cobro_tn", "costo_envio_default", "margen_min", "percepciones_pct", "financiacion_mp_pct", "tn_gasto_pct", "envio_full_default"]) {
+      for (const k of ["tasa_anual", "comision_ml", "comision_tn", "dias_cobro_ml", "dias_cobro_tn", "costo_envio_default", "margen_min", "percepciones_pct", "financiacion_mp_pct", "tn_gasto_pct", "envio_full_default", "dias_acreditacion_ml"]) {
         if (c[k] != null) patch[k] = num(c[k]);
       }
       const { error } = await d.from("finanzas_config").upsert(patch, { onConflict: "id" });

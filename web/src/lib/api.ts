@@ -262,7 +262,11 @@ export const api = {
     if (!connected) return;
     await callFn("finanzas-guardar", { accion: "config", config });
   },
-  async guardarProductoFinanzas(producto_id: string, datos: { proveedor?: string | null; precio_compra?: number | null; condicion_pago_dias?: number; tasa_financiacion?: number }): Promise<void> {
+  async guardarProductoFinanzas(producto_id: string, datos: {
+    proveedor?: string | null; precio_compra?: number | null; condicion_pago_dias?: number;
+    tasa_financiacion?: number; envio_flex?: number | null; condicion_pago_label?: string | null;
+    canal_principal?: string | null;
+  }): Promise<void> {
     if (!connected) return;
     await callFn("finanzas-guardar", { accion: "producto", producto_id, datos });
   },

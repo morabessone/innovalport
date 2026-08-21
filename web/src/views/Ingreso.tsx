@@ -30,7 +30,8 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
   const [provsCB, setProvsCB] = useState<{ id: number; nombre: string }[]>([]);
   const [provCBId, setProvCBId] = useState("");   // IDProveedor de Contabilium
   // Términos de compra (para el análisis financiero / ciclo de caja).
-  const [condPago, setCondPago] = useState("0");  // días; 0 = contado
+  const [condPago, setCondPago] = useState("0");  // días; 0 = contado; "otra" = libre
+  const [condOtra, setCondOtra] = useState("");   // días libres si condPago === "otra"
   const [fechaCompra, setFechaCompra] = useState(() => new Date().toISOString().slice(0, 10));
   const [tasaFin, setTasaFin] = useState("");     // % anual si no es contado
   const [ingresoId, setIngresoId] = useState<string | null>(null);
@@ -126,7 +127,7 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
       }), {
         proveedor: proveedorNombre || null,
         fecha_compra: fechaCompra,
-        condicion_pago_dias: Number(condPago) || 0,
+        condicion_pago_dias: condPago === "otra" ? (Number(condOtra) || 0) : (Number(condPago) || 0),
         tasa_financiacion: Number(tasaFin) || 0,
       });
       const total = listos.reduce((a, f) => a + f.cantidad, 0);
@@ -186,13 +187,27 @@ export function Ingreso({ notify }: { notify: (m: string) => void }) {
               <option value="30">30 días</option>
               <option value="60">60 días</option>
               <option value="90">90 días</option>
+              <option value="otra">Otra (especificar)</option>
             </select>
           </div>
+          {condPago === "otra" ? (
+            <div className="field">
+              <label>Días de pago</label>
+              <input className="input" type="number" min={0} value={condOtra} onChange={(e) => setCondOtra(e.target.value)} placeholder="ej: 45" />
+            </div>
+          ) : (
+            <div className="field">
+              <label>Fecha de compra</label>
+              <input className="input" type="date" value={fechaCompra} onChange={(e) => setFechaCompra(e.target.value)} />
+            </div>
+          )}
+        </div>
+        {condPago === "otra" && (
           <div className="field">
             <label>Fecha de compra</label>
             <input className="input" type="date" value={fechaCompra} onChange={(e) => setFechaCompra(e.target.value)} />
           </div>
-        </div>
+        )}
         {condPago !== "0" && (
           <div className="field">
             <label>Tasa de financiación anual (%) <span className="muted">— opcional</span></label>

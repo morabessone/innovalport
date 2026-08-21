@@ -549,7 +549,30 @@ button.pub-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-li
 .fin-sku { font-family: var(--mono); font-size: .72rem; color: var(--ink-faint); }
 .fin-prov { font-size: .82rem; color: var(--ink-soft); }
 .mini-tag { font-size: .64rem; color: var(--warn); font-family: var(--sans); }
+.mini-tag.ok { color: var(--ok, #1a9f5a); }
+.mini-tag.warn { color: var(--warn); }
 .fin-warn-row { background: var(--warn-wash); }
+.fin-clickable { cursor: pointer; }
+.fin-clickable:hover { background: var(--card-2); }
+
+/* Etiqueta de canal (ML exacto / TN aproximado) */
+.canal-tag { display: inline-block; font-size: .64rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--line-strong); color: var(--ink-soft); }
+.canal-tag.ml { background: rgba(62,134,255,.12); border-color: rgba(62,134,255,.4); color: #2f6fe0; }
+.canal-tag.tn { background: rgba(100,116,139,.14); border-color: rgba(100,116,139,.4); color: #5a6675; }
+.canal-tag.ambos { background: rgba(24,159,90,.12); border-color: rgba(24,159,90,.4); color: #1a9f5a; }
+
+.fin-warn-note { margin-top: 8px; font-size: .74rem; color: var(--warn); background: var(--warn-wash); border-radius: 8px; padding: 6px 9px; }
+.fin-sep { margin: 14px 0 8px; font-size: .78rem; font-weight: 700; color: var(--ink-soft); display: flex; align-items: center; gap: 8px; }
+.fin-tot-row td { font-weight: 700; border-top: 2px solid var(--line-strong); }
+
+/* Proyección */
+.proy-list { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; }
+.proy-item { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: .82rem; }
+.proy-item:hover { background: var(--card-2); }
+.proy-item.on { background: var(--accent-wash); }
+.proy-nom { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proy-sku { font-family: var(--mono); font-size: .7rem; color: var(--ink-faint); }
+.proy-precio { font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .prov-card { overflow: hidden; }
 .prov-head { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; font: inherit; color: var(--ink); background: transparent; border: 0; padding: 14px 18px; cursor: pointer; }

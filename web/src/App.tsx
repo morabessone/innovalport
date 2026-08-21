@@ -34,12 +34,13 @@ const SECTION_TITLE: Record<Section, string> = {
   fin_proveedor: "Finanzas",
   fin_capital: "Finanzas",
   fin_matriz: "Finanzas",
+  fin_proyeccion: "Finanzas",
 };
 const PUB_SUBTAB: Partial<Record<Section, PubTab>> = {
   pub_activas: "activas", pub_pendientes: "pendientes", pub_optim: "optim",
 };
 const FIN_SUBTAB: Partial<Record<Section, FinTab>> = {
-  fin_resumen: "resumen", fin_producto: "producto", fin_proveedor: "proveedor", fin_capital: "capital", fin_matriz: "matriz",
+  fin_resumen: "resumen", fin_producto: "producto", fin_proveedor: "proveedor", fin_capital: "capital", fin_matriz: "matriz", fin_proyeccion: "proyeccion",
 };
 
 const THEME_NEXT: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };

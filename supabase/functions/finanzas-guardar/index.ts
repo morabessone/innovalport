@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     if (accion === "config") {
       const c = config ?? {};
       const patch: Record<string, unknown> = { id: 1, updated_at: new Date().toISOString() };
-      for (const k of ["tasa_anual", "comision_ml", "comision_tn", "dias_cobro_ml", "dias_cobro_tn", "costo_envio_default", "margen_min"]) {
+      for (const k of ["tasa_anual", "comision_ml", "comision_tn", "dias_cobro_ml", "dias_cobro_tn", "costo_envio_default", "margen_min", "percepciones_pct", "financiacion_mp_pct", "tn_gasto_pct", "envio_full_default", "dias_acreditacion_ml"]) {
         if (c[k] != null) patch[k] = num(c[k]);
       }
       const { error } = await d.from("finanzas_config").upsert(patch, { onConflict: "id" });
@@ -37,6 +37,9 @@ Deno.serve(async (req) => {
         precio_compra: x.precio_compra != null ? num(x.precio_compra) : null,
         condicion_pago_dias: Math.round(num(x.condicion_pago_dias)),
         tasa_financiacion: num(x.tasa_financiacion),
+        envio_flex: x.envio_flex != null ? num(x.envio_flex) : 0,
+        condicion_pago_label: x.condicion_pago_label ?? null,
+        canal_principal: x.canal_principal ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: "producto_id" });
       if (error) return json({ ok: false, error: error.message }, 500);

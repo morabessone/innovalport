@@ -27,15 +27,19 @@ export function ProductoDetalle({ producto, onClose, onSaved, notify }: {
   const dirty = min !== (s.stock_minimo ?? 0);
 
   // Parámetros financieros del producto (para el ciclo de caja). Solo base local.
-  const [fin, setFin] = useState({ proveedor: "", precio_compra: "", condicion_pago_dias: "0", tasa_financiacion: "" });
+  const [fin, setFin] = useState({ proveedor: "", precio_compra: "", condicion_pago_dias: "0", condOtra: "", tasa_financiacion: "", envio_flex: "" });
   const [finBusy, setFinBusy] = useState(false);
   useEffect(() => {
     api.productoFinanzas(s.producto_id).then((pf) => {
-      if (pf) setFin({
+      if (!pf) return;
+      const std = ["0", "30", "60", "90"].includes(String(pf.condicion_pago_dias ?? 0));
+      setFin({
         proveedor: pf.proveedor ?? "",
         precio_compra: pf.precio_compra != null ? String(pf.precio_compra) : "",
-        condicion_pago_dias: String(pf.condicion_pago_dias ?? 0),
+        condicion_pago_dias: std ? String(pf.condicion_pago_dias ?? 0) : "otra",
+        condOtra: std ? "" : String(pf.condicion_pago_dias ?? 0),
         tasa_financiacion: pf.tasa_financiacion ? String(pf.tasa_financiacion) : "",
+        envio_flex: pf.envio_flex != null && pf.envio_flex !== 0 ? String(pf.envio_flex) : "",
       });
     }).catch(() => {});
   }, [s.producto_id]);
@@ -45,8 +49,10 @@ export function ProductoDetalle({ producto, onClose, onSaved, notify }: {
       await api.guardarProductoFinanzas(s.producto_id, {
         proveedor: fin.proveedor.trim() || null,
         precio_compra: fin.precio_compra ? Number(fin.precio_compra) : null,
-        condicion_pago_dias: Number(fin.condicion_pago_dias) || 0,
+        condicion_pago_dias: fin.condicion_pago_dias === "otra" ? (Number(fin.condOtra) || 0) : (Number(fin.condicion_pago_dias) || 0),
+        condicion_pago_label: fin.condicion_pago_dias === "otra" ? "Otra" : null,
         tasa_financiacion: Number(fin.tasa_financiacion) || 0,
+        envio_flex: fin.envio_flex ? Number(fin.envio_flex) : 0,
       });
       notify(`Datos financieros de ${s.sku} guardados`);
     } catch (e) { notify("No se pudo guardar: " + (e as Error).message); }
@@ -152,9 +158,20 @@ export function ProductoDetalle({ producto, onClose, onSaved, notify }: {
               <div className="field" style={{ marginBottom: 0 }}><label>Condición de pago</label>
                 <select className="select" value={fin.condicion_pago_dias} onChange={(e) => setFin({ ...fin, condicion_pago_dias: e.target.value })}>
                   <option value="0">Contado</option><option value="30">30 días</option><option value="60">60 días</option><option value="90">90 días</option>
+                  <option value="otra">Otra (especificar)</option>
                 </select></div>
-              <div className="field" style={{ marginBottom: 0 }}><label>Tasa financiación anual %</label>
-                <input className="input" type="number" step="0.1" value={fin.tasa_financiacion} onChange={(e) => setFin({ ...fin, tasa_financiacion: e.target.value })} placeholder="opcional" /></div>
+              {fin.condicion_pago_dias === "otra"
+                ? <div className="field" style={{ marginBottom: 0 }}><label>Días de pago</label>
+                    <input className="input" type="number" min={0} value={fin.condOtra} onChange={(e) => setFin({ ...fin, condOtra: e.target.value })} placeholder="ej: 45" /></div>
+                : <div className="field" style={{ marginBottom: 0 }}><label>Tasa financiación anual %</label>
+                    <input className="input" type="number" step="0.1" value={fin.tasa_financiacion} onChange={(e) => setFin({ ...fin, tasa_financiacion: e.target.value })} placeholder="opcional" /></div>}
+            </div>
+            <div className="row2">
+              {fin.condicion_pago_dias === "otra" &&
+                <div className="field" style={{ marginBottom: 0 }}><label>Tasa financiación anual %</label>
+                  <input className="input" type="number" step="0.1" value={fin.tasa_financiacion} onChange={(e) => setFin({ ...fin, tasa_financiacion: e.target.value })} placeholder="opcional" /></div>}
+              <div className="field" style={{ marginBottom: 0 }}><label>Envío Flex por unidad <span className="muted">(manual)</span></label>
+                <input className="input" type="number" value={fin.envio_flex} onChange={(e) => setFin({ ...fin, envio_flex: e.target.value })} placeholder="ej: 400" /></div>
             </div>
             <button className="btn primary" style={{ marginTop: 10 }} onClick={guardarFin} disabled={finBusy}>
               {finBusy ? "Guardando…" : "Guardar datos financieros"}

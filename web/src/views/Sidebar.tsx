@@ -4,7 +4,7 @@ export type Section =
   | "home"
   | "panel" | "reponer" | "ingreso" | "movimiento" | "devoluciones" | "inventario" | "historial"
   | "pub_activas" | "pub_pendientes" | "pub_optim"
-  | "fin_resumen" | "fin_producto" | "fin_proveedor" | "fin_capital" | "fin_matriz";
+  | "fin_resumen" | "fin_producto" | "fin_proveedor" | "fin_capital" | "fin_matriz" | "fin_proyeccion";
 
 const STOCK_TABS: { id: Section; label: string }[] = [
   { id: "panel", label: "Panel" },
@@ -26,6 +26,7 @@ const FIN_TABS: { id: Section; label: string }[] = [
   { id: "fin_proveedor", label: "Por proveedor" },
   { id: "fin_capital", label: "Capital de trabajo" },
   { id: "fin_matriz", label: "Matriz de decisión" },
+  { id: "fin_proyeccion", label: "Proyección" },
 ];
 
 const STOCK_IDS = STOCK_TABS.map((t) => t.id);
